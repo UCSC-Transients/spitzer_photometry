@@ -8,6 +8,7 @@ import pytest
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 
+from scripts import validate_internal_consistency as validation
 from src import (
     config,
     native_fit_campaign as campaign,
@@ -296,3 +297,54 @@ def test_singular_colocated_sources_preserve_uncertainty_shapes(tmp_path):
     assert np.isnan(result["transient_epoch_errs"][0])
     assert np.isnan(result["nuclear_point_err"])
     assert len(summary) == 1 and np.isnan(float(summary.iloc[0]["err"]))
+
+
+@pytest.mark.parametrize(
+    ("flux", "error", "prediction", "message"),
+    [
+        (np.nan, 1.0, np.ones((2, 2)), "recovered flux"),
+        (1.0, np.inf, np.ones((2, 2)), "reported uncertainty"),
+        (1.0, 0.0, np.ones((2, 2)), "must be positive"),
+        (1.0, 1.0, np.array([[1.0, np.inf], [1.0, 1.0]]), "prediction"),
+    ],
+)
+def test_validation_rejects_invalid_science_values(flux, error, prediction, message):
+    with pytest.raises(RuntimeError, match=message):
+        validation._validate_trial_values(
+            flux_jy=flux,
+            error_jy=error,
+            truth_jy=1.0,
+            prediction=prediction,
+            residual_z=np.ones((2, 2)),
+        )
+
+
+def test_validation_cli_infinite_error_exits_nonzero_and_json_is_strict(tmp_path, monkeypatch, capsys):
+    original_solve = solver.run_gls_solve
+
+    def corrupt_error(*args, **kwargs):
+        result = original_solve(*args, **kwargs)
+        result["transient_errs"][:] = np.inf
+        return result
+
+    monkeypatch.setattr(solver, "run_gls_solve", corrupt_error)
+    status = validation.main([
+        "--trials", "1", "--output-dir", str(tmp_path / "invalid-validation"),
+    ])
+    output = capsys.readouterr().out
+    assert status == 2
+    assert '"status": "failed"' in output
+    assert "Infinity" not in output and "NaN" not in output
+
+
+def test_validation_report_is_standards_compliant_json(tmp_path):
+    import json
+
+    report = validation.run_validation(tmp_path / "valid-validation", trials=1)
+    payload = (tmp_path / "valid-validation" / "internal_consistency.json").read_text()
+    decoded = json.loads(
+        payload,
+        parse_constant=lambda value: pytest.fail(f"non-standard JSON constant: {value}"),
+    )
+    assert decoded["status"] == "passed"
+    assert report["status"] == "passed"

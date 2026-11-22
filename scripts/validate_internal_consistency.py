@@ -28,6 +28,31 @@ from src import config, solver
 from src.native_fit_campaign import _temporary_config
 
 
+def _validate_trial_values(
+    *,
+    flux_jy: float,
+    error_jy: float,
+    truth_jy: float,
+    prediction: np.ndarray,
+    residual_z: np.ndarray,
+) -> None:
+    """Reject invalid science outputs before calculating a pull or writing JSON."""
+    scalars = {
+        'recovered flux': flux_jy,
+        'reported uncertainty': error_jy,
+        'injected truth': truth_jy,
+    }
+    for label, value in scalars.items():
+        if not np.isfinite(value):
+            raise RuntimeError(f'Validation failed: {label} is nonfinite')
+    if error_jy <= 0.0:
+        raise RuntimeError('Validation failed: reported uncertainty must be positive')
+    if not np.isfinite(prediction).all():
+        raise RuntimeError('Validation failed: model prediction contains nonfinite values')
+    if not np.isfinite(residual_z).all():
+        raise RuntimeError('Validation failed: normalized residual contains nonfinite values')
+
+
 def run_validation(output_dir: str | Path, trials: int = 3, truth_flux_jy: float = .002) -> dict:
     """Run SR=1,2,4 recovery trials, return metrics, and save JSON/PNG products."""
     dest = Path(output_dir)
@@ -83,16 +108,27 @@ def run_validation(output_dir: str | Path, trials: int = 3, truth_flux_jy: float
                         prediction = solver.predict_cutout_model(result, cutouts, [], [], 0)
                     flux, error = float(result['transient_fluxes'][0]), float(result['transient_errs'][0])
                     z = (cutouts[0]['data'] - prediction) / noise
+                    _validate_trial_values(
+                        flux_jy=flux,
+                        error_jy=error,
+                        truth_jy=truth,
+                        prediction=prediction,
+                        residual_z=z,
+                    )
                     rows.append(dict(sr=sr, seed=seed, flux_jy=flux, error_jy=error,
                                      truth_jy=truth, pull=(flux - truth) / error,
                                      residual_z_mean=float(z.mean()), residual_z_std=float(z.std())))
                     if sr == 2 and seed == 0:
                         example = (cutouts[0]['data'], prediction, z)
     pulls = np.array([r['pull'] for r in rows])
-    report = dict(kind='synthetic_internal_consistency', trials_per_sr=trials,
+    if not np.isfinite(pulls).all():
+        raise RuntimeError('Validation failed: recovery pull contains nonfinite values')
+    report = dict(status='passed', kind='synthetic_internal_consistency', trials_per_sr=trials,
                   truth_flux_jy=truth, rows=rows, max_abs_pull=float(np.max(np.abs(pulls))),
                   notes='Repeated seeds across SR are correlated; do not interpret them as independent coverage trials.')
-    (dest / 'internal_consistency.json').write_text(json.dumps(report, indent=2) + '\n')
+    (dest / 'internal_consistency.json').write_text(
+        json.dumps(report, indent=2, allow_nan=False) + '\n'
+    )
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.8))
     for ax, values, label in zip(axes, example, ['Data (Jy/native pixel)', 'Model (Jy/native pixel)', 'Residual / sigma']):
         artist = ax.imshow(values, origin='lower', cmap='coolwarm' if 'sigma' in label else 'viridis')
@@ -119,15 +155,33 @@ def run_validation(output_dir: str | Path, trials: int = 3, truth_flux_jy: float
     return report
 
 
-if __name__ == '__main__':
+def main(argv: list[str] | None = None) -> int:
+    """Run the validation CLI and return a process status code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', default='output/review_validation')
     parser.add_argument('--trials', type=int, default=3)
     parser.add_argument('--truth-flux-jy', type=float, default=.002)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.trials < 1:
         parser.error('--trials must be positive')
-    report = run_validation(args.output_dir, args.trials, args.truth_flux_jy)
-    print(json.dumps({k: v for k, v in report.items() if k != 'rows'}, indent=2))
+    try:
+        report = run_validation(args.output_dir, args.trials, args.truth_flux_jy)
+    except (RuntimeError, ValueError) as error:
+        print(json.dumps({'status': 'failed', 'error': str(error)}, indent=2, allow_nan=False))
+        return 2
+    print(json.dumps(
+        {k: v for k, v in report.items() if k != 'rows'},
+        indent=2,
+        allow_nan=False,
+    ))
     if report['max_abs_pull'] > 5:
-        raise SystemExit('Synthetic recovery failed the predeclared 5-sigma regression bound')
+        print(json.dumps({
+            'status': 'failed',
+            'error': 'Synthetic recovery failed the predeclared 5-sigma regression bound',
+        }, indent=2, allow_nan=False))
+        return 3
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
