@@ -22,7 +22,7 @@ def _extract_varying_vector(arr):
     else: return arr[:, 0]
 
 def _load_channel_data(channel, pmap_dir, combine_gauss=False):
-    cache_key = (channel, combine_gauss)
+    cache_key = (str(channel).lower(), os.path.realpath(pmap_dir), combine_gauss)
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
@@ -104,16 +104,11 @@ def iracpc_pmap_corr(observed_flux, x, y, channel,
         xfov = 0.0
         yfov = 0.0
 
-    f0 = np.atleast_1d(observed_flux).astype(float)
-    x0 = np.atleast_1d(x).astype(float)
-    y0 = np.atleast_1d(y).astype(float)
-    
-    if np.isscalar(channel):
-        channels = np.full(f0.shape, channel)
-    else:
-        channels = np.atleast_1d(channel)
-        if len(channels) == 1 and len(f0) > 1:
-            channels = np.full(f0.shape, channels[0])
+    f0, x0, y0, channels = np.broadcast_arrays(
+        np.asarray(observed_flux, dtype=float), np.asarray(x, dtype=float),
+        np.asarray(y, dtype=float), np.asarray(channel))
+    result_shape = f0.shape
+    f0, x0, y0, channels = (a.ravel() for a in (f0, x0, y0, channels))
 
     corrected_flux = np.zeros_like(f0) * np.nan
     
@@ -159,6 +154,6 @@ def iracpc_pmap_corr(observed_flux, x, y, channel,
             print(f"[PMap] Error processing Channel {ch}: {e}")
             continue
 
-    if np.isscalar(observed_flux):
+    if result_shape == ():
         return corrected_flux[0]
-    return corrected_flux
+    return corrected_flux.reshape(result_shape)

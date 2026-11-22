@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import time
+import warnings
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -59,7 +60,10 @@ def _scene_wcs_from_bcd_footprints(
 ):
     ra_all, dec_all = [], []
     h, w = int(bcd_shape[0]), int(bcd_shape[1])
-    corners = np.array([[0.0, 0.0], [w - 1.0, 0.0], [0.0, h - 1.0], [w - 1.0, h - 1.0]], dtype=float)
+    # Sample full pixel edges, not just centers/corners, to include SIP curvature.
+    xs, ys = np.linspace(-.5, w - .5, w + 1), np.linspace(-.5, h - .5, h + 1)
+    corners = np.concatenate([np.column_stack((xs, np.full_like(xs, edge))) for edge in (-.5, h - .5)]
+                             + [np.column_stack((np.full_like(ys, edge), ys)) for edge in (-.5, w - .5)])
     for wb in bcd_wcs_list:
         ra_c, dec_c = wb.pixel_to_world_values(corners[:, 0], corners[:, 1])
         ra_all.extend(np.asarray(ra_c, dtype=float).tolist())
@@ -67,18 +71,21 @@ def _scene_wcs_from_bcd_footprints(
     for ra_p, dec_p in sky_points_deg:
         ra_all.append(float(ra_p))
         dec_all.append(float(dec_p))
-    ra_ref = float(np.mean(ra_all))
+    ra_rad = np.deg2rad(ra_all)
+    ra_ref = float(np.rad2deg(np.arctan2(np.mean(np.sin(ra_rad)), np.mean(np.cos(ra_rad)))) % 360)
     dec_ref = float(np.mean(dec_all))
-    cosd = max(np.cos(np.deg2rad(dec_ref)), 1e-6)
-    x_pix = ((np.asarray(ra_all) - ra_ref) * cosd * 3600.0) / float(scene_pixel_scale_arcsec)
-    y_pix = ((np.asarray(dec_all) - dec_ref) * 3600.0) / float(scene_pixel_scale_arcsec)
+    wcs_scene = WCS(naxis=2)
+    wcs_scene.wcs.crpix = [1., 1.]
+    wcs_scene.wcs.crval = [ra_ref, dec_ref]
+    wcs_scene.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs_scene.wcs.cdelt = [-float(scene_pixel_scale_arcsec) / 3600.0, float(scene_pixel_scale_arcsec) / 3600.0]
+    x_pix, y_pix = wcs_scene.world_to_pixel_values(ra_all, dec_all)
     x_min = float(np.min(x_pix)) - float(pad_scene_px)
     x_max = float(np.max(x_pix)) + float(pad_scene_px)
     y_min = float(np.min(y_pix)) - float(pad_scene_px)
     y_max = float(np.max(y_pix)) + float(pad_scene_px)
     w_scene = int(np.ceil(x_max - x_min + 1.0))
     h_scene = int(np.ceil(y_max - y_min + 1.0))
-    wcs_scene = WCS(naxis=2)
     wcs_scene.wcs.crpix = [1.0 - x_min, 1.0 - y_min]
     wcs_scene.wcs.crval = [ra_ref, dec_ref]
     wcs_scene.wcs.ctype = ["RA---TAN", "DEC--TAN"]
@@ -117,7 +124,7 @@ def _scene_wcs_budgeted(
         if int(shp[0] * shp[1]) <= int(max_scene_pixels):
             return w_scene, shp, scale
         scale *= 1.12
-    return w_scene, shp, scale
+    raise RuntimeError('Unable to construct a scene within max_scene_pixels after 20 attempts')
 
 
 def _synthetic_galaxy_scene(shape, cx: float, cy: float):
@@ -164,7 +171,8 @@ def resolve_explicit_nuclear_host_sky_deg() -> Optional[Tuple[float, float]]:
 
 
 def generate_synthetic_case(n_bcd: int, *, seed_base: int = 123):
-    n_pix = 48
+    """Small multi-roll smoke case sized for exact dense normal equations."""
+    n_pix = 16
     ra0 = 197.450286
     dec0 = -23.381497
     nuc_ra = 197.448762
@@ -179,8 +187,8 @@ def generate_synthetic_case(n_bcd: int, *, seed_base: int = 123):
         (n_pix, n_pix),
         min_scene_pixel_scale_arcsec=(config.PIXEL_SCALE / config.SUPERSAMPLE_FACTOR),
         sky_points_deg=[(ra0, dec0), (nuc_ra, nuc_dec)],
-        max_scene_pixels=13000,
-        pad_scene_px=int(getattr(config, "NATIVE_SCENE_PAD_PX", 6)),
+        max_scene_pixels=1600,
+        pad_scene_px=2,
     )
     cx_g, cy_g = scene_wcs.world_to_pixel_values(float(nuc_ra), float(nuc_dec))
     scene_truth = _synthetic_galaxy_scene(scene_shape, float(cx_g), float(cy_g))
@@ -375,11 +383,64 @@ def _cr_mask_local(cutout, sigma_thresh: float = 6.0):
 def apply_native_cutout_cr_mask(cutout: dict) -> None:
     """Set sigma=inf on locally detected CRs so the joint solver gives them zero weight."""
     cr = _cr_mask_local(cutout)
+    cutout["cr_mask"] = np.asarray(cutout.get("cr_mask", np.zeros_like(cr)), dtype=bool) | cr
     if not np.any(cr):
         return
     s = np.asarray(cutout["sigma"], dtype=np.float64).copy()
     s[cr] = np.inf
     cutout["sigma"] = s
+
+
+def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
+    """Reject positive outliers unsupported by aligned BCDs in the same flux group.
+
+    Native science arrays are never resampled. Reprojected reference copies are
+    used only for rejection. Background offsets are removed robustly, and the
+    reference uncertainty is conservatively not reduced by the number of BCDs.
+    With fewer than min_references independent frames, retain the instrument
+    mask and record insufficient evidence instead of applying a core heuristic.
+    """
+    masks = []
+    for i, c in enumerate(cutouts):
+        peers = [j for j, other in enumerate(cutouts) if j != i
+                 and other.get('epoch_id') == c.get('epoch_id')
+                 and bool(other.get('is_template')) == bool(c.get('is_template'))]
+        peers = sorted(peers, key=lambda j: abs(cutouts[j].get('mjd', 0) - c.get('mjd', 0)))[:8]
+        data, sigma = np.asarray(c['data']), np.asarray(c['sigma'])
+        valid = solver.valid_fit_mask(c)
+        cr = np.zeros(data.shape, dtype=bool)
+        if len(peers) < min_references:
+            c['cr_status'] = 'insufficient_references'
+            masks.append(cr)
+            continue
+        references, errors = [], []
+        for j in peers:
+            other = cutouts[j]
+            vm = solver.valid_fit_mask(other)
+            ref, _ = reproject_interp((np.where(vm, other['data'], np.nan), other['wcs']),
+                                      c['wcs'], shape_out=data.shape)
+            err, _ = reproject_interp((np.where(vm, other['sigma'], np.nan), other['wcs']),
+                                      c['wcs'], shape_out=data.shape)
+            overlap = valid & np.isfinite(ref) & np.isfinite(err)
+            if np.any(overlap):
+                ref += np.median(data[overlap] - ref[overlap])
+            references.append(ref)
+            errors.append(err)
+        cube = np.asarray(references)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            reference = np.nanmedian(cube, axis=0)
+            ref_sigma = np.nanmedian(np.asarray(errors), axis=0)
+            scatter = 1.4826 * np.nanmedian(np.abs(cube - reference), axis=0)
+        noise = np.sqrt(sigma**2 + ref_sigma**2 + scatter**2)
+        supported = np.sum(np.isfinite(cube), axis=0) >= min_references
+        cr = valid & supported & np.isfinite(noise) & ((data - reference) > threshold * noise)
+        c['cr_status'] = 'consensus'
+        masks.append(cr)
+    # Apply together: rejection must not depend on frame iteration order.
+    for c, cr in zip(cutouts, masks):
+        c['cr_mask'] = np.asarray(c.get('cr_mask', np.zeros_like(cr)), dtype=bool) | cr
+        c['sigma'] = np.where(c['cr_mask'], np.inf, c['sigma'])
 
 
 def crop_cutout_to_size(cut: dict, size: int, ra_deg: float, dec_deg: float) -> dict:
@@ -407,8 +468,13 @@ def crop_cutout_to_size(cut: dict, size: int, ra_deg: float, dec_deg: float) -> 
     out = dict(cut)
     out["data"] = np.asarray(cut["data"], dtype=float)[y0:y1, x0:x1]
     out["sigma"] = np.asarray(cut["sigma"], dtype=float)[y0:y1, x0:x1]
+    if "cr_mask" in cut:
+        out["cr_mask"] = np.asarray(cut["cr_mask"], dtype=bool)[y0:y1, x0:x1]
     out["wcs"] = cut["wcs"].slice((slice(y0, y1), slice(x0, x1)))
     out["raw_wcs"] = cut["raw_wcs"].slice((slice(y0, y1), slice(x0, x1)))
+    for key in ('wcs', 'raw_wcs'):
+        if hasattr(cut[key], '_detector_wcs'):
+            out[key]._detector_wcs = cut[key]._detector_wcs.deepcopy()
     return out
 
 
@@ -436,19 +502,20 @@ def unmask_sigma_inf_in_radius(cutout: dict, radius_px: float, center: str = "nu
     cy = float(np.asarray(py).ravel()[0])
     yy, xx = np.mgrid[: s.shape[0], : s.shape[1]]
     rr = np.hypot(xx - cx, yy - cy)
-    unmask = (~np.isfinite(s)) & (d != 0) & (rr <= r)
+    unmask = np.isposinf(s) & np.isfinite(d) & (d != 0) & (rr <= r)
+    unmask &= ~np.asarray(cutout.get("cr_mask", np.zeros_like(s, dtype=bool)), dtype=bool)
     if not np.any(unmask):
         return
-    finite = np.isfinite(s) & (d != 0)
+    finite = np.isfinite(s) & (s > 0) & np.isfinite(d) & (d != 0)
     ref = finite & (rr <= r)
     if np.any(ref):
         med = float(np.nanmedian(s[ref]))
     elif np.any(finite):
         med = float(np.nanmedian(s[finite]))
     else:
-        med = 1.0
+        return
     if not np.isfinite(med) or med <= 0.0:
-        med = 1.0
+        return
     s2 = s.copy()
     s2[unmask] = med
     cutout["sigma"] = s2
@@ -635,12 +702,26 @@ def _split_gp_components_from_prior(results, gp_scene):
         return gp, np.zeros_like(gp)
 
 
-def write_native_fit_pdf(label: str, cutouts, results, out_dir: str) -> str:
+def write_native_fit_pdf(
+    label: str,
+    cutouts,
+    results,
+    out_dir: str,
+    *,
+    scene_sr_label: int | None = None,
+) -> str:
+    """
+    ``scene_sr_label``: optional override for PDF titles when ``config.SUPERSAMPLE_FACTOR``
+    may not match the factor used to build geometry (e.g. config restored before writing).
+    """
     os.makedirs(out_dir, exist_ok=True)
     out_pdf = os.path.join(out_dir, f"NATIVE_FIT_DIAGNOSTIC_{label}.pdf")
     # `up` is nearest-neighbor PDF zoom only (`_superres`); solver SR is `SUPERSAMPLE_FACTOR`.
     up = int(max(1, getattr(config, "DIAG_SUPERRES_DISPLAY_FACTOR", 40)))
-    scene_sr = int(max(1, getattr(config, "SUPERSAMPLE_FACTOR", 1)))
+    if scene_sr_label is not None:
+        scene_sr = int(max(1, int(scene_sr_label)))
+    else:
+        scene_sr = int(max(1, getattr(config, "SUPERSAMPLE_FACTOR", 1)))
     disp_lbl = f"scene SR={scene_sr}×, PDF zoom ×{up}"
     gp_i, host_i, nps_i = _intrinsic_components(results)
     gp_prior = results.get("gp_prior_params", {}) if isinstance(results, dict) else {}
@@ -705,7 +786,9 @@ def write_native_fit_pdf(label: str, cutouts, results, out_dir: str) -> str:
             cmap_bcd = plt.get_cmap("gray").copy()
             cmap_bcd.set_bad(color="red")
             im0 = ax[0].imshow(bcd_masked, origin="lower", cmap=cmap_bcd, norm=flux_norm_bcd, interpolation="nearest")
-            ax[0].set_title("BCD (unaltered)")
+            ax[0].set_title(
+                f"BCD data ({tuple(data.shape)} px); pristine detector orientation — compass is sky axes on stamp",
+            )
             plt.colorbar(im0, ax=ax[0], fraction=0.046, pad=0.04)
             im1 = ax[1].imshow(gp1_hi, origin="lower", cmap="gray", norm=flux_norm_bcd, interpolation="nearest")
             if ell1 is not None and var1 is not None:
@@ -779,9 +862,10 @@ def write_native_fit_pdf(label: str, cutouts, results, out_dir: str) -> str:
                     if (ell1 is not None and var1 is not None)
                     else f"GP prior ({kern_lbl}): unavailable"
                 )
+            _sh_scene = tuple(int(x) for x in results.get("scene_shape", (0, 0)))
             fig.suptitle(
                 f"Native template-fit diagnostics: {label}, frame={i}, template={bool(c.get('is_template'))}\n"
-                f"{disp_lbl}; {gp_txt}; {resid_stat}",
+                f"BCD stamp {tuple(data.shape)} px vs intrinsic scene {_sh_scene} px | {disp_lbl}; {gp_txt}; {resid_stat}",
             )
             plt.tight_layout()
             pdf.savefig(fig)

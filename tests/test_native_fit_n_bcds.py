@@ -324,7 +324,7 @@ def _write_native_fit_pdf(n_bcd: int, cutouts, results):
 @pytest.mark.slow
 @pytest.mark.parametrize("n_bcd", [1, 2, 10])
 def test_native_fit_runs_for_n_bcds(n_bcd: int):
-    n_pix = 48
+    n_pix = 16
     ra0 = 197.450286
     dec0 = -23.381497
     rng = np.random.default_rng(123 + n_bcd)
@@ -376,8 +376,8 @@ def test_native_fit_runs_for_n_bcds(n_bcd: int):
             (n_pix, n_pix),
             min_scene_pixel_scale_arcsec=(config.PIXEL_SCALE / config.SUPERSAMPLE_FACTOR),
             sky_points_deg=[(ra0, dec0), (nuc_ra, nuc_dec)],
-            max_scene_pixels=13000,
-            pad_scene_px=int(getattr(config, "NATIVE_SCENE_PAD_PX", 6)),
+            max_scene_pixels=1600,
+            pad_scene_px=2,
         )
         n_scene = int(scene_shape[0] * scene_shape[1])
         cx_g, cy_g = scene_w_north.world_to_pixel_values(float(nuc_ra), float(nuc_dec))

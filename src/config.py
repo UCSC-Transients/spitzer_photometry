@@ -14,6 +14,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, 'data', 'raw')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 PRF_DIR = os.path.join(BASE_DIR, 'data', 'prfs')
+USE_SYNTHETIC_PRF = False  # Only explicit synthetic/debug runs may enable this.
 PMAP_DIR = os.path.join(BASE_DIR, 'data', 'pmap_fits')
 DIAGNOSTIC_DIR = os.path.join(OUTPUT_DIR, 'diagnostics')
 SOURCE_CATALOG_PATH = os.path.join(OUTPUT_DIR, 'source_catalog.fits')
@@ -24,10 +25,10 @@ STAMP_SIZE_PX = 20
 BORDER_PX = 10
 ANALYSIS_BOX_SIZE = STAMP_SIZE_PX + 2 * BORDER_PX
 PRF_OVERSAMPLE = 100 # Standard IRAC PRF oversampling
+PRF_PIXEL_SCALE_ARCSEC = PIXEL_SCALE / PRF_OVERSAMPLE
 
-# Super Resolution / latent scene grid supersampling.
-# The GP latent galaxy scene is represented on this North-up grid; increase this
-# if reprojection/rotation artifacts become non-negligible versus noise.
+# Native ROI expands with SR: ANALYSIS_BOX_SIZE * SUPERSAMPLE_FACTOR detector px/side (cutouts only; no warp).
+# Latent north-up scene built in solver from these stamps.
 SUPERSAMPLE_FACTOR = 2
 
 # Buffer
@@ -55,7 +56,7 @@ CR_BRIGHT_CORE_GUARD_RADIUS_PX = 0.0
 CR_BRIGHT_CORE_GUARD_CENTER = "transient"
 
 SPLIT_DATE_MJD = 58750.0
-EPOCH_WINDOW_DAYS = 2.0
+EPOCH_WINDOW_DAYS = 1.0  # Maximum total span of a shared transient-flux group.
 
 # --- Astrometric alignment robustness ---
 # Match radius for BCD->deep-template source matching in world coordinates.
@@ -106,7 +107,9 @@ GP_PROFILE_CENTER_RA = None
 GP_PROFILE_CENTER_DEC = None
 # Soft central monotonic prior on GP annular means: discourage outer-annulus mean from
 # exceeding inner-annulus mean by more than ALLOWED_DROP_JY.
-ENFORCE_GP_CENTRAL_MONOTONICITY = True
+# Experimental annular penalty is symmetric, not a valid one-sided monotonic
+# prior. Keep it disabled until its constrained formulation is validated.
+ENFORCE_GP_CENTRAL_MONOTONICITY = False
 GP_CENTRAL_MONOTONIC_ALLOWED_DROP_JY = 0.0
 # Relative strength of annular monotonic prior vs median scene-diagonal Hessian.
 GP_CENTRAL_MONOTONIC_STRENGTH_FRAC = 0.03
@@ -127,6 +130,21 @@ NUCLEAR_POINT_NONNEGATIVE = True
 # Nuclear point ΔRA/ΔDec subpixel solve (requires solver support for extra state).
 FLOAT_NUCLEAR_POINT_POSITION = False
 NUCLEAR_POINT_POS_RIDGE = 1e6
+# Native χ² weights: optional inflation of σ inside a disk (FR-2 / Phase 2.2).
+# χ² uses 1/σ²; scale>1 downweights pixels in the disk (often improves structured nuclear residuals).
+# Radius in native detector pixels. Disabled when radius is 0 or scale is 1.0.
+NUCLEAR_DATA_WEIGHT_RADIUS_NATIVE_PX = 0.0
+NUCLEAR_DATA_WEIGHT_SIGMA_SCALE = 1.0
+# Disk center: transient | nuclear | host | galaxy_extended (falls back if coords unset).
+NUCLEAR_DATA_WEIGHT_CENTER = "transient"
+# --- Global native σ adjustments (same units as cutout σ: Jy per pixel; FR-2) ---
+# Applied in order before nuclear-disk scaling: quadrature floor → flux exponent → disk.
+# σ_eff = sqrt(σ² + SIGMA_QUADRATURE_FLOOR_JY²): raises low-σ (sky) more than high-σ (core),
+# shrinking the contrast σ_core/σ_sky and softening over-weighted faint pixels in χ².
+SIGMA_QUADRATURE_FLOOR_JY = 0.0
+# σ *= (|data| / median(|data|))^SIGMA_RELATIVE_FLUX_EXPONENT on valid finite pixels.
+# If pipeline σ roughly tracks √flux, exponent ≈ (⅓−½) = −1/6 mimics σ ∝ flux^(1/3) vs median.
+SIGMA_RELATIVE_FLUX_EXPONENT = 0.0
 # Two-scale GP scene: clamp component amplitudes nonnegative (default True).
 GP_COMPONENTS_NONNEGATIVE = True
 # Optional sky center for extended galaxy QA (annulus masks in diagnostics). None = disabled.
@@ -139,6 +157,7 @@ GALAXY_QA_ANNULUS_OUTER_PX = 14.0
 # Native North-up scenes are often ~100–120 px per side (~1e4–1.5e4 pixels); keep above that
 # so cutout/native fits use the same dense GP prior as smaller reprojected stamps.
 MAX_SCENE_PIXELS = 25000
+SOLVER_DENSE_MEMORY_LIMIT_BYTES = 4_000_000_000
 # Scene GP stationary kernel: "matern32" (smooth) or "matern12" (exponential / rougher).
 GP_MATERN_ORDER = "matern32"
 # Precision build: "matern" (default Matérn) or "diagonal" (sparse ε·I, diagnostics / tests).

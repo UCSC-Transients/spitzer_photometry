@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
 import json
 import os
 import subprocess
@@ -100,6 +101,18 @@ def build_run_manifest(
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     paths = sorted({os.path.abspath(p) for p in input_image_paths})
+    fingerprints = []
+    for filename in paths:
+        item = {'path': filename}
+        try:
+            digest = hashlib.sha256()
+            with open(filename, 'rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(block)
+            item.update(sha256=digest.hexdigest(), size_bytes=os.path.getsize(filename))
+        except OSError as exc:
+            item['read_error'] = str(exc)
+        fingerprints.append(item)
     doc: dict[str, Any] = {
         "schema": "spitzer_photometry.run_manifest.v1",
         "git_commit": _git_commit_id(),
@@ -110,6 +123,7 @@ def build_run_manifest(
         "config": config_snapshot(),
         "input_cbcd_paths": paths,
         "n_input_frames": len(paths),
+        "input_fingerprints": fingerprints,
     }
     if extra:
         doc["extra"] = _json_safe(dict(extra))
@@ -130,4 +144,3 @@ def write_run_manifest(
         json.dump(doc, f, indent=2, sort_keys=False)
         f.write("\n")
     return dest
-

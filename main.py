@@ -3,7 +3,7 @@
 `run_pipeline()` applies a **nominal science configuration** via
 `native_fit_campaign._temporary_config` (see `nominal_overrides` below and
 `docs/NOMINAL_NATIVE_SCIENCE_RUN.md`) so one command reproduces the intended
-native SR=2, PRF-on, GP-off, transient-float production run without editing
+native SR=2, PRF-on, GP-regularized, transient-float production run without editing
 every default in `src/config.py` for ad-hoc tests.
 """
 import os
@@ -15,11 +15,6 @@ from astropy.coordinates import SkyCoord
 from src import config, solver, diagnostics, pipeline_fit
 from src.native_fit_campaign import _temporary_config
 
-# Suppress annoying FITS warnings
-warnings.filterwarnings('ignore', category=UserWarning, append=True)
-from astropy.utils.exceptions import AstropyWarning
-warnings.simplefilter('ignore', category=AstropyWarning)
-
 def run_pipeline():
     print("=== Spitzer Photometry Pipeline ===")
     # Nominal science settings (see docs/NOMINAL_NATIVE_SCIENCE_RUN.md). The
@@ -29,7 +24,8 @@ def run_pipeline():
         'FIT_ON_NATIVE_PIXELS': True,
         'SUPERSAMPLE_FACTOR': 2,
         'NATIVE_CUTOUT_SIZE': 40,
-        'USE_SCENE_GP_PRIOR': False,
+        'USE_SCENE_GP_PRIOR': True,
+        'ENFORCE_GP_CENTRAL_MONOTONICITY': False,
         'SCENE_INDEPENDENT_RIDGE': 1e-12,
         'FLOAT_TRANSIENT_POSITION': True,
         'PRF_ORDER_PROJECT_THEN_CONVOLVE': True,
@@ -38,7 +34,7 @@ def run_pipeline():
         'CR_BRIGHT_CORE_GUARD_DILATION': 3,
         'CR_BRIGHT_CORE_GUARD_RADIUS_PX': 8.0,
         'CR_BRIGHT_CORE_GUARD_CENTER': 'nuclear',
-        'UNMASK_SIGMA_INF_RADIUS_PX': 8.0,
+        'UNMASK_SIGMA_INF_RADIUS_PX': 0.0,
         'UNMASK_SIGMA_INF_CENTER': 'nuclear',
     }
     with _temporary_config(nominal_overrides):
@@ -60,12 +56,11 @@ def run_pipeline():
         full_template = solver.reconstruct_full_model(results, all_stars, full_flux_list, chan_str, cutouts)
         results['model_scene'] = full_template
         
-        epoch_bgs = results['epoch_backgrounds']
-        frame_bgs = np.array([epoch_bgs[c['epoch_id']] for c in cutouts])
+        frame_bgs = np.asarray(results['bcd_backgrounds'], dtype=float)
         results['backgrounds'] = frame_bgs
         
         # --- Final Diagnostics ---
-        stretch_mask = diagnostics.diagnostic_stretch_mask(cutouts, final_template.shape)
+        stretch_mask = diagnostics.diagnostic_stretch_mask(cutouts, final_template.shape, results['scene_wcs'])
         overlay_frame = None
         te_arr = results.get('transient_epoch_fluxes')
         se_arr = results.get('science_epoch_ids')
@@ -119,12 +114,13 @@ def run_pipeline():
         t = Table([
             [c['mjd'] for c in cutouts],
             results['transient_fluxes'],
-            results.get('transient_errs', np.zeros(len(cutouts))),
+            results.get('transient_errs', np.full(len(cutouts), np.nan)),
             frame_bgs,
             [c['epoch_id'] for c in cutouts],
             [c['filename'] for c in cutouts],
-            [1 if c.get('is_template') else 0 for c in cutouts]
-        ], names=('MJD', 'Flux_Jy', 'Flux_Err_Jy', 'Background_Jy', 'Epoch_ID', 'Filename', 'Is_Template'))
+            [1 if c.get('is_template') else 0 for c in cutouts],
+            [bool(c.get('epoch_gap_warning', False)) for c in cutouts],
+        ], names=('MJD', 'Flux_Jy', 'Flux_Err_Jy', 'Background_Jy', 'Epoch_ID', 'Filename', 'Is_Template', 'Epoch_Gap_Warning'))
         
         out_csv = os.path.join(config.OUTPUT_DIR, f'lightcurve_{chan_str}.csv')
         t.write(out_csv, overwrite=True)

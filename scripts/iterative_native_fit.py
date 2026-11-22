@@ -70,6 +70,8 @@ def main():
     args = parse_args()
     if args.data_source == "synthetic" and not args.allow_synthetic:
         raise SystemExit("Synthetic data mode requires --allow-synthetic (safety rule).")
+    if args.data_source == "synthetic":
+        config.USE_SYNTHETIC_PRF = True
     if args.require_nuclear_point_source and args.no_nuclear_point_source:
         raise SystemExit("Use only one of --require-nuclear-point-source and --no-nuclear-point-source.")
     if args.gp_tier_auto and args.mode not in _SINGLE_STAGE_MODES:
