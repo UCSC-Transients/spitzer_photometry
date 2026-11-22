@@ -67,7 +67,7 @@ CR_BRIGHT_CORE_GUARD_CENTER = "transient"
 # A candidate native-pixel CR must also be an excess in this fixed local
 # footprint.  This prevents ordinary phase/dither redistribution of a stable
 # undersampled point source from being classified as a CR.
-CR_CONSENSUS_APERTURE_RADIUS_PX = 2.5
+CR_CONSENSUS_APERTURE_RADIUS_PX = 4.0
 
 SPLIT_DATE_MJD = 58750.0
 EPOCH_WINDOW_DAYS = 1.0  # Maximum total span of a shared transient-flux group.

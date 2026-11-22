@@ -441,7 +441,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         # excess in a local pixel-integrated footprint relative to every valid
         # peer.  The statistical threshold is unchanged; this is a conservative
         # sampling-consistency requirement, not error inflation.
-        radius = float(max(0.0, getattr(config, 'CR_CONSENSUS_APERTURE_RADIUS_PX', 2.5)))
+        radius = float(max(0.0, getattr(config, 'CR_CONSENSUS_APERTURE_RADIUS_PX', 4.0)))
         rr = int(np.ceil(radius))
         ky, kx = np.mgrid[-rr:rr + 1, -rr:rr + 1]
         kernel = ((kx * kx + ky * ky) <= radius * radius).astype(float)
@@ -449,7 +449,10 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         def footprint_sum(values, finite):
             numerator = convolve(np.where(finite, values, 0.0), kernel, mode='constant', cval=0.0)
             support = convolve(finite.astype(float), kernel, mode='constant', cval=0.0)
-            return np.where(support == kernel.sum(), numerator, np.nan)
+            # Use the same clipped footprint near detector/cutout boundaries;
+            # abstain only when fewer than half of its pixels are supported.
+            min_support = max(3.0, np.ceil(0.5 * kernel.sum()))
+            return np.where(support >= min_support, numerator, np.nan)
 
         target_aperture = footprint_sum(data, valid)
         peer_apertures = np.asarray([

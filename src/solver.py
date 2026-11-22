@@ -11,7 +11,7 @@ import numpy as np
 from scipy.linalg import lstsq, cho_factor, cho_solve
 from scipy.sparse import coo_matrix
 from scipy.sparse import issparse
-from scipy.optimize import Bounds, minimize
+from scipy.optimize import Bounds, lsq_linear, minimize
 from scipy.ndimage import gaussian_filter, binary_erosion, map_coordinates, shift as ndimage_shift
 from scipy.signal import fftconvolve
 from astropy.io import fits
@@ -275,6 +275,7 @@ def _estimate_solver_peak_memory_bytes(
         + n_chosen * n_chosen  # selected covariance
         + 4 * n_params
     )
+    bounded_fallback_workspace = itemsize * 3 * n_params * n_params
 
     mode = _prf_operator_mode(scene_shape)
     project_then_convolve = bool(getattr(config, 'PRF_ORDER_PROJECT_THEN_CONVOLVE', False))
@@ -291,7 +292,7 @@ def _estimate_solver_peak_memory_bytes(
         n_scene_total * 8 + sum(n_native_each) * 6 + n_params * 6
     )
     retained = hessian + priors + exact_operators + anchor_operators + geometry_and_vectors
-    peak = retained + max(assembly_workspace, covariance_workspace)
+    peak = retained + max(assembly_workspace, covariance_workspace, bounded_fallback_workspace)
     return {
         'peak_bytes': int(peak),
         'hessian_bytes': int(hessian),
@@ -299,6 +300,7 @@ def _estimate_solver_peak_memory_bytes(
         'rectangular_design_bytes': int(rectangular_design),
         'scene_crossproduct_bytes': int(scene_crossproduct),
         'covariance_workspace_bytes': int(covariance_workspace),
+        'bounded_fallback_workspace_bytes': int(bounded_fallback_workspace),
         'exact_operator_cache_bytes': int(exact_operators),
         'anchor_operator_cache_bytes': int(anchor_operators),
         'geometry_and_vector_bytes': int(geometry_and_vectors),
@@ -325,9 +327,9 @@ def _guard_solver_memory(
     if estimate['peak_bytes'] > cap:
         raise MemoryError(
             'Dense fit peak estimated at '
-            f"{estimate['peak_bytes'] / 1e9:.2f} GB (cap {cap / 1e9:.2f} GB; "
-            f"exact cache {estimate['exact_operator_cache_bytes'] / 1e9:.2f} GB; "
-            f"rectangular design {estimate['rectangular_design_bytes'] / 1e9:.2f} GB); "
+            f"{estimate['peak_bytes'] / 2**20:.2f} MiB (cap {cap / 2**20:.2f} MiB; "
+            f"exact cache {estimate['exact_operator_cache_bytes'] / 2**20:.2f} MiB; "
+            f"rectangular design {estimate['rectangular_design_bytes'] / 2**20:.2f} MiB); "
             'reduce the scene footprint/SR or use a validated sparse solver'
         )
     return estimate
@@ -1246,6 +1248,16 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
     def jac(theta):
         return H @ theta - rhs
 
+    def projected_gradient_norm(theta):
+        if not np.isfinite(theta).all():
+            return np.inf
+        gradient = H @ theta - rhs
+        gradient[(theta <= lb + 1e-8) & (gradient > 0)] = 0.0
+        gradient[(theta >= ub - 1e-8) & (gradient < 0)] = 0.0
+        return float(np.max(np.abs(gradient)))
+
+    projected_tolerance = 1e-5 * max(1.0, float(np.max(np.abs(rhs))))
+
     bnds = list(zip(lb.tolist(), ub.tolist()))
     res = minimize(
         fun,
@@ -1256,24 +1268,51 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
         options={'maxiter': 2000, 'ftol': 1e-14, 'gtol': 1e-8},
     )
     if not res.success:
-        _log.warning("Bounded MAP (L-BFGS-B) did not converge: %s; falling back to trust-constr.", res.message)
-        res = minimize(
-            fun,
-            x0,
-            method='trust-constr',
-            jac=jac,
-            hess=lambda _th: H,
-            bounds=Bounds(lb, ub),
-            options={'verbose': 0, 'maxiter': 300},
-        )
-        if not res.success:
+        if projected_gradient_norm(res.x) <= projected_tolerance:
+            _log.warning(
+                "Bounded MAP reported %s but satisfies the projected-gradient criterion; accepting KKT point.",
+                res.message,
+            )
+        else:
+            _log.warning(
+                "Bounded MAP (L-BFGS-B) did not converge: %s; falling back to the exact PSD least-squares form.",
+                res.message,
+            )
+            eigenvalues, eigenvectors = np.linalg.eigh(H)
+            spectral_scale = max(1.0, float(np.max(np.abs(eigenvalues))))
+            spectral_tolerance = spectral_scale * H.shape[0] * np.finfo(float).eps * 10.0
+            positive = eigenvalues > spectral_tolerance
+            null_rhs = eigenvectors[:, ~positive].T @ rhs
+            if null_rhs.size and np.max(np.abs(null_rhs)) > projected_tolerance:
+                raise RuntimeError('Bounded MAP objective has a forced null-space component')
+            roots = np.sqrt(eigenvalues[positive])
+            design = roots[:, None] * eigenvectors[:, positive].T
+            target = (eigenvectors[:, positive].T @ rhs) / roots
+            res = lsq_linear(
+                design,
+                target,
+                bounds=(lb, ub),
+                method='trf',
+                tol=1e-12,
+                lsmr_tol='auto',
+                max_iter=1000,
+            )
+        if not res.success and projected_gradient_norm(res.x) > projected_tolerance:
+            _log.warning("Bounded MAP (PSD least-squares) did not converge: %s; falling back to trust-constr.", res.message)
+            res = minimize(
+                fun,
+                res.x if np.isfinite(res.x).all() else x0,
+                method='trust-constr',
+                jac=jac,
+                hess=lambda _th: H,
+                bounds=Bounds(lb, ub),
+                options={'verbose': 0, 'maxiter': 300},
+            )
+        if not res.success and projected_gradient_norm(res.x) > projected_tolerance:
             raise RuntimeError(f"Bounded MAP failed to converge: {res.message}")
     if not np.isfinite(res.x).all():
         raise RuntimeError('Bounded MAP returned nonfinite parameters')
-    gradient = H @ res.x - rhs
-    gradient[(res.x <= lb + 1e-8) & (gradient > 0)] = 0.
-    gradient[(res.x >= ub - 1e-8) & (gradient < 0)] = 0.
-    if np.max(np.abs(gradient)) > 1e-5 * max(1., np.max(np.abs(rhs))):
+    if projected_gradient_norm(res.x) > projected_tolerance:
         raise RuntimeError('Bounded MAP failed projected-gradient convergence check')
     return res.x / scale
 
