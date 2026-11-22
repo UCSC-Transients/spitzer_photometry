@@ -1,6 +1,7 @@
 """src/solver.py"""
 import sys
 import os
+import hashlib
 import logging
 import warnings
 from functools import wraps, lru_cache
@@ -170,6 +171,168 @@ _PRF_EXACT_OPERATOR_CACHE = {}
 _PRF_NATIVE_OPERATOR_BUNDLE_CACHE = {}
 
 
+def _directory_calibration_fingerprint(path: str) -> tuple:
+    """Return a cheap content identity for calibration files in ``path``."""
+    root = os.path.realpath(str(path))
+    try:
+        names = sorted(name for name in os.listdir(root) if name.lower().endswith(('.fits', '.fit', '.fts')))
+    except OSError:
+        return (root, 'unavailable')
+    identity = []
+    for name in names:
+        full = os.path.join(root, name)
+        try:
+            stat = os.stat(full)
+        except OSError:
+            identity.append((name, 'unavailable'))
+        else:
+            identity.append((name, int(stat.st_mtime_ns), int(stat.st_size)))
+    return (root, tuple(identity))
+
+
+@lru_cache(maxsize=32)
+def _prf_cache_fingerprint_cached(
+    channel: str,
+    settings: tuple,
+    prf_dir: str,
+    pmap_dir: str,
+) -> tuple:
+    return (
+        str(channel).lower(),
+        settings,
+        _directory_calibration_fingerprint(prf_dir),
+        _directory_calibration_fingerprint(pmap_dir),
+    )
+
+
+def _prf_cache_fingerprint(channel: str) -> tuple:
+    """Fingerprint every configuration/calibration input used by PRF operators."""
+    names = (
+        'PRF_OVERSAMPLE',
+        'PRF_PIXEL_SCALE_ARCSEC',
+        'PRF_PREBLUR_IN_OVERSAMPLE_PIXELS',
+        'PRF_APPLY_PMAP_GAIN',
+        'PRF_APODIZATION_EDGE',
+        'PRF_SPATIAL_ANCHORS_PER_AXIS',
+        'PRF_OPERATOR_MODE',
+        'PRF_OPERATOR_EXACT_MAX_PIXELS',
+        'PRF_ORDER_PROJECT_THEN_CONVOLVE',
+        'USE_SYNTHETIC_PRF',
+    )
+    settings = tuple((name, repr(getattr(config, name, None))) for name in names)
+    return _prf_cache_fingerprint_cached(
+        str(channel).lower(),
+        settings,
+        str(getattr(config, 'PRF_DIR', '')),
+        str(getattr(config, 'PMAP_DIR', '')),
+    )
+
+
+def _mask_fingerprint(entry: dict) -> str:
+    mask = valid_fit_mask(entry, effective_native_sigma_for_fit(entry['sigma'], entry))
+    return hashlib.sha256(np.ascontiguousarray(mask, dtype=np.uint8).tobytes()).hexdigest()
+
+
+def _estimate_solver_peak_memory_bytes(
+    cutouts: list[dict],
+    scene_shape: tuple[int, int],
+    *,
+    n_scene_blocks: int,
+    n_stars: int,
+    n_science_epochs: int,
+) -> dict[str, int]:
+    """Conservatively estimate concurrently live solver allocations.
+
+    The estimate includes retained exact/anchor operators, the largest
+    rectangular frame design and its weighted copy, dense normal/prior blocks,
+    and selected-covariance workspaces.  It is evaluated before any of those
+    arrays are allocated.
+    """
+    itemsize = np.dtype(np.float64).itemsize
+    n_scene = int(np.prod(scene_shape))
+    n_scene_total = int(n_scene_blocks) * n_scene
+    n_frames = len(cutouts)
+    n_native_each = [int(np.asarray(entry['data']).size) for entry in cutouts]
+    n_native_max = max(n_native_each, default=0)
+    host_list = getattr(config, 'HOST_GAUSSIAN_SIGMA_PX_LIST', None)
+    n_host = 0
+    if bool(getattr(config, 'USE_HOST_GAUSSIAN_CORE', False)):
+        n_host = len(host_list) if host_list else 1
+    n_nuclear = int(bool(getattr(config, 'USE_NUCLEAR_POINT_SOURCE', False)))
+    n_offsets = 2 if bool(getattr(config, 'FLOAT_TRANSIENT_POSITION', False)) and n_science_epochs else 0
+    n_params = n_scene_total + n_science_epochs + n_offsets + n_stars + n_host + n_nuclear + n_frames
+    n_chosen = max(0, n_params - n_scene_total)
+
+    hessian = itemsize * n_params * n_params
+    priors = itemsize * int(n_scene_blocks) * n_scene * n_scene
+    rectangular_design = itemsize * 2 * n_native_max * n_scene
+    scene_crossproduct = itemsize * n_scene * n_scene
+    assembly_workspace = rectangular_design + scene_crossproduct
+
+    covariance_workspace = itemsize * (
+        n_params * n_params  # scaled Hessian
+        + 2 * n_params * n_chosen  # unit RHS and selected solve columns
+        + n_chosen * n_chosen  # selected covariance
+        + 4 * n_params
+    )
+
+    mode = _prf_operator_mode(scene_shape)
+    project_then_convolve = bool(getattr(config, 'PRF_ORDER_PROJECT_THEN_CONVOLVE', False))
+    exact_operators = 0
+    anchor_operators = 0
+    n_anchor = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3))) ** 2
+    if mode == 'exact' and not project_then_convolve:
+        exact_operators = itemsize * n_frames * n_scene * n_scene
+    else:
+        operator_pixels = sum(n_native_each) if project_then_convolve else n_frames * n_scene
+        anchor_operators = itemsize * (2 * n_anchor + 1) * operator_pixels
+
+    geometry_and_vectors = itemsize * (
+        n_scene_total * 8 + sum(n_native_each) * 6 + n_params * 6
+    )
+    retained = hessian + priors + exact_operators + anchor_operators + geometry_and_vectors
+    peak = retained + max(assembly_workspace, covariance_workspace)
+    return {
+        'peak_bytes': int(peak),
+        'hessian_bytes': int(hessian),
+        'prior_bytes': int(priors),
+        'rectangular_design_bytes': int(rectangular_design),
+        'scene_crossproduct_bytes': int(scene_crossproduct),
+        'covariance_workspace_bytes': int(covariance_workspace),
+        'exact_operator_cache_bytes': int(exact_operators),
+        'anchor_operator_cache_bytes': int(anchor_operators),
+        'geometry_and_vector_bytes': int(geometry_and_vectors),
+        'n_params': int(n_params),
+    }
+
+
+def _guard_solver_memory(
+    cutouts: list[dict],
+    scene_shape: tuple[int, int],
+    *,
+    n_scene_blocks: int,
+    n_stars: int,
+    n_science_epochs: int,
+) -> dict[str, int]:
+    estimate = _estimate_solver_peak_memory_bytes(
+        cutouts,
+        scene_shape,
+        n_scene_blocks=n_scene_blocks,
+        n_stars=n_stars,
+        n_science_epochs=n_science_epochs,
+    )
+    cap = int(getattr(config, 'SOLVER_DENSE_MEMORY_LIMIT_BYTES', 4_000_000_000))
+    if estimate['peak_bytes'] > cap:
+        raise MemoryError(
+            'Dense fit peak estimated at '
+            f"{estimate['peak_bytes'] / 1e9:.2f} GB (cap {cap / 1e9:.2f} GB; "
+            f"exact cache {estimate['exact_operator_cache_bytes'] / 1e9:.2f} GB; "
+            f"rectangular design {estimate['rectangular_design_bytes'] / 1e9:.2f} GB); "
+            'reduce the scene footprint/SR or use a validated sparse solver'
+        )
+    return estimate
+
+
 def _center_kernel_for_convolution(ker):
     """
     Recenter a point-response image so its peak sits at array center.
@@ -272,7 +435,12 @@ def _get_prf_operator_bundle(scene_wcs, w_native, scene_shape, channel, is_full_
     """
     h, w = int(scene_shape[0]), int(scene_shape[1])
     n_anch = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3)))
-    bkey = (id(scene_wcs), id(w_native), h, w, channel, bool(is_full_array), n_anch)
+    bkey = (
+        _wcs_projection_cache_key(scene_wcs),
+        _wcs_projection_cache_key(w_native),
+        h, w, channel, bool(is_full_array), n_anch,
+        _prf_cache_fingerprint(channel),
+    )
     if bkey in _PRF_OPERATOR_BUNDLE_CACHE:
         return _PRF_OPERATOR_BUNDLE_CACHE[bkey]
     n = n_anch
@@ -351,7 +519,11 @@ def _get_prf_operator_bundle_native(native_wcs, native_shape, channel, is_full_a
     """
     h, w = int(native_shape[0]), int(native_shape[1])
     n_anch = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3)))
-    bkey = (id(native_wcs), h, w, channel, bool(is_full_array), n_anch)
+    bkey = (
+        _wcs_projection_cache_key(native_wcs),
+        h, w, channel, bool(is_full_array), n_anch,
+        _prf_cache_fingerprint(channel),
+    )
     if bkey in _PRF_NATIVE_OPERATOR_BUNDLE_CACHE:
         return _PRF_NATIVE_OPERATOR_BUNDLE_CACHE[bkey]
 
@@ -439,7 +611,12 @@ def _prf_operator_mode(scene_shape):
 
 def _get_prf_exact_operator_matrix(scene_wcs, w_native, scene_shape, channel, is_full_array):
     h, w = int(scene_shape[0]), int(scene_shape[1])
-    key = (id(scene_wcs), id(w_native), h, w, channel, bool(is_full_array))
+    key = (
+        _wcs_projection_cache_key(scene_wcs),
+        _wcs_projection_cache_key(w_native),
+        h, w, channel, bool(is_full_array),
+        _prf_cache_fingerprint(channel),
+    )
     A = _PRF_EXACT_OPERATOR_CACHE.get(key)
     if A is not None:
         return A
@@ -1120,6 +1297,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     _PRF_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_NATIVE_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_EXACT_OPERATOR_CACHE.clear()
+    _prf_cache_fingerprint_cached.cache_clear()
     
     if not cutouts: return None
     for entry in cutouts:
@@ -1130,23 +1308,29 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     scene_shape = (cutouts[0]['data'].shape[0], cutouts[0]['data'].shape[1])
     if deep_template is not None and np.ndim(deep_template) == 2:
         scene_shape = (int(deep_template.shape[0]), int(deep_template.shape[1]))
-    n_scene = scene_shape[0]*scene_shape[1]
     n_blocks = 2 if isinstance(gp_params, dict) and gp_params.get('ell2') is not None else 1
-    estimated_bytes = 8 * (n_blocks * n_scene + len(cutouts) + len(stars) + 4)**2 * 6
-    if estimated_bytes > int(getattr(config, 'SOLVER_DENSE_MEMORY_LIMIT_BYTES', 4_000_000_000)):
-        raise MemoryError(f'Dense fit estimated at {estimated_bytes / 1e9:.2f} GB; '
-                          'reduce the scene footprint/SR or use a validated sparse solver')
+    science_epoch_count = len({
+        int(entry['epoch_id']) for entry in cutouts if not entry.get('is_template', False)
+    })
+    memory_estimate = _guard_solver_memory(
+        cutouts,
+        scene_shape,
+        n_scene_blocks=n_blocks,
+        n_stars=len(stars),
+        n_science_epochs=science_epoch_count,
+    )
+    n_scene = scene_shape[0]*scene_shape[1]
     
     results = {
         'transient_fluxes': np.zeros(len(cutouts)),
-        'transient_errs': np.zeros(len(cutouts)),
+        'transient_errs': np.full(len(cutouts), np.nan),
         'transient_epoch_fluxes': np.zeros(0),
-        'transient_epoch_errs': np.zeros(0),
+        'transient_epoch_errs': np.full(science_epoch_count, np.nan),
         'science_epoch_ids': np.zeros(0, dtype=int),
         'transient_epoch_index_by_id': {},
         'transient_bg_cov_by_epoch_id': {},
         'star_fluxes': np.zeros(len(stars)),
-        'star_errs': np.zeros(len(stars)),
+        'star_errs': np.full(len(stars), np.nan),
         'star_prior_fluxes': np.asarray(star_initial_fluxes, dtype=float).copy(),
         'star_prior_equivalent_exposures': float(
             getattr(config, 'CATALOG_PRIOR_EQUIVALENT_EXPOSURES', 5.0)
@@ -1158,18 +1342,22 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         'scene_shape': scene_shape,
         'transient_dra_deg': 0.0,
         'transient_ddec_deg': 0.0,
-        'transient_dra_err_deg': 0.0,
-        'transient_ddec_err_deg': 0.0,
+        'transient_dra_err_deg': np.nan,
+        'transient_ddec_err_deg': np.nan,
         'host_core_flux': 0.0,
-        'host_core_err': 0.0,
+        'host_core_err': np.nan,
         'nuclear_point_flux': 0.0,
-        'nuclear_point_err': 0.0,
+        'nuclear_point_err': np.nan,
         'bcd_backgrounds': np.zeros(len(cutouts)),
         'gp_prior_params': {},
         'model_config': {name: getattr(config, name) for name in dir(config)
                          if name.isupper() and isinstance(getattr(config, name),
                             (str, int, float, bool, tuple, list, type(None)))},
         'effective_sigmas': [effective_native_sigma_for_fit(c['sigma'], c).copy() for c in cutouts],
+        'memory_estimate': memory_estimate,
+        'uncertainty_status': 'not_computed',
+        'uncertainty_failure_reason': None,
+        'identifiability_status': 'not_assessed',
     }
 
     try:
@@ -1194,15 +1382,18 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             'var2': None if var2 is None else float(var2),
             'matern_order': gp_model.normalize_matern_order(getattr(config, 'GP_MATERN_ORDER', 'matern32')),
         }
-        cut_sig = tuple((str(c.get('filename', '')), int(bool(c.get('is_template')))) for c in cutouts)
+        cut_sig = tuple((
+            str(c.get('filename', '')),
+            int(bool(c.get('is_template'))),
+            int(c.get('epoch_id', 0)),
+            _wcs_projection_cache_key(c['wcs']),
+            _wcs_projection_cache_key(c['raw_wcs']),
+            _mask_fingerprint(c),
+        ) for c in cutouts)
         tw = template_wcs
         tw_sig = None
         if tw is not None:
-            tw_sig = (
-                tuple(np.asarray(tw.wcs.crpix, dtype=float).tolist()),
-                tuple(np.asarray(tw.wcs.crval, dtype=float).tolist()),
-                tuple(np.asarray(tw.wcs.cdelt, dtype=float).tolist()),
-            )
+            tw_sig = _wcs_projection_cache_key(tw)
         cache_key = (
             scene_shape,
             cut_sig,
@@ -1217,6 +1408,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             bool(getattr(config, 'USE_NUCLEAR_POINT_SOURCE', False)),
             getattr(config, 'NUCLEAR_POINT_RA', None),
             getattr(config, 'NUCLEAR_POINT_DEC', None),
+            _prf_cache_fingerprint(str(getattr(config, 'CHANNEL', 'ch2'))),
         )
         g = _GEOMETRY_CACHE.get(cache_key)
         cache_hit = g is not None
@@ -1912,9 +2104,19 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             unit[chosen, np.arange(len(chosen))] = 1. / scale_h[chosen]
             columns = cho_solve(cho_factor(h_scaled, lower=True), unit) / scale_h[:, None]
             cov = columns[chosen, :]
+            covariance_diagonal = np.diag(cov)
+            if (
+                not np.isfinite(covariance_diagonal).all()
+                or np.any(covariance_diagonal <= 0.0)
+            ):
+                raise np.linalg.LinAlgError(
+                    'selected covariance has nonfinite or nonpositive variance'
+                )
             sig = np.full(n_params, np.nan)
-            sig[chosen] = np.sqrt(np.diag(cov))
+            sig[chosen] = np.sqrt(covariance_diagonal)
             results['uncertainty_kind'] = 'local_unconstrained_curvature_marginalized_over_scene'
+            results['uncertainty_status'] = 'available'
+            results['identifiability_status'] = 'locally_identifiable_at_fixed_model'
             results['transient_at_lower_bound'] = np.asarray(results['transient_epoch_fluxes']) <= 1e-12
             if n_sci_ep > 0:
                 e_err = sig[idx_trans:idx_trans + n_sci_ep].copy()
@@ -1959,10 +2161,25 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                     'cov_transient_background': float(sub[0, 1]),
                 }
             results['transient_bg_cov_by_epoch_id'] = cov_bg
-        except np.linalg.LinAlgError:
-            for key in ('transient_errs', 'transient_epoch_errs', 'star_errs'):
-                results[key] = np.full_like(results[key], np.nan, dtype=float)
-            _log.warning("Could not invert Hessian H; uncertainties are unavailable (NaN).")
+        except (np.linalg.LinAlgError, ValueError) as covariance_error:
+            results['transient_errs'] = np.full(len(cutouts), np.nan, dtype=float)
+            results['transient_epoch_errs'] = np.full(n_sci_ep, np.nan, dtype=float)
+            results['star_errs'] = np.full(n_stars, np.nan, dtype=float)
+            results['transient_dra_err_deg'] = np.nan
+            results['transient_ddec_err_deg'] = np.nan
+            results['host_core_err'] = np.nan
+            if n_host > 1:
+                results['host_core_errs'] = np.full(n_host, np.nan, dtype=float)
+            results['nuclear_point_err'] = np.nan
+            results['transient_bg_cov_by_epoch_id'] = {}
+            results['uncertainty_kind'] = 'unavailable'
+            results['uncertainty_status'] = 'unavailable'
+            results['uncertainty_failure_reason'] = str(covariance_error)
+            results['identifiability_status'] = 'non_identifiable_or_singular_curvature'
+            _log.warning(
+                "Could not compute fitted-parameter covariance; uncertainties are unavailable (NaN): %s",
+                covariance_error,
+            )
 
         if float_pos and idx_off is not None:
             dar = results['transient_dra_deg']
@@ -1989,6 +2206,7 @@ def _with_fitted_config(function):
         try:
             for name, value in fitted.items():
                 setattr(config, name, value)
+            _prf_cache_fingerprint_cached.cache_clear()
             return function(results, *args, **kwargs)
         finally:
             for name, value in saved.items():

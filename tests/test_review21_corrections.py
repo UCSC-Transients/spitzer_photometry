@@ -8,7 +8,15 @@ import pytest
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 
-from src import config, native_fit_campaign as campaign, pipeline_fit, preprocessing, solver
+from src import (
+    config,
+    native_fit_campaign as campaign,
+    pipeline_fit,
+    postprocessing,
+    preprocessing,
+    solver,
+)
+from src.prf_identity_context import identity_prf_operators_context
 
 
 def _wcs(n: int, *, scale_arcsec: float = 1.22, phase: float = 0.0, roll_deg: float = 0.0) -> WCS:
@@ -155,3 +163,136 @@ def test_consensus_cr_abstains_on_phase_roll_but_recovers_injected_cr():
         yy, xx = np.indices((n, n))
         source_footprint = (xx - x0) ** 2 + (yy - y0) ** 2 <= 3.0**2
         assert not np.any(entry["cr_mask"] & source_footprint)
+
+
+def _flat_cutout(n: int, index: int, *, template: bool = True) -> dict:
+    wcs = _wcs(n, phase=0.01 * index)
+    return {
+        "data": np.full((n, n), 1.0e-3),
+        "sigma": np.full((n, n), 1.0e-5),
+        "wcs": wcs,
+        "raw_wcs": wcs,
+        "epoch_id": 0,
+        "is_template": template,
+        "filename": f"memory_ch2_{index}.fits",
+        "mjd": index / 10.0,
+    }
+
+
+def test_memory_guard_rejects_9x9_40_frame_exact_cache_before_allocation(monkeypatch):
+    cutouts = [_flat_cutout(9, i) for i in range(40)]
+    monkeypatch.setattr(config, "PRF_OPERATOR_MODE", "exact")
+    monkeypatch.setattr(config, "PRF_ORDER_PROJECT_THEN_CONVOLVE", False)
+    monkeypatch.setattr(config, "SOLVER_DENSE_MEMORY_LIMIT_BYTES", 800_000)
+    monkeypatch.setattr(
+        solver,
+        "frame_design_matrix",
+        lambda *args, **kwargs: pytest.fail("preallocation guard was reached too late"),
+    )
+    with pytest.raises(MemoryError, match="exact cache"):
+        solver.run_gls_solve(
+            cutouts, [], [], {}, (1.0, 1.0e-7), np.zeros((9, 9)), cutouts[0]["wcs"], 1,
+        )
+
+
+def test_memory_guard_allows_under_budget_small_fit(monkeypatch):
+    cutouts = [_flat_cutout(5, i) for i in range(2)]
+    monkeypatch.setattr(config, "PRF_OPERATOR_MODE", "anchor")
+    monkeypatch.setattr(config, "PRF_ORDER_PROJECT_THEN_CONVOLVE", True)
+    estimate = solver._estimate_solver_peak_memory_bytes(
+        cutouts, (5, 5), n_scene_blocks=1, n_stars=0, n_science_epochs=0,
+    )
+    monkeypatch.setattr(config, "SOLVER_DENSE_MEMORY_LIMIT_BYTES", estimate["peak_bytes"] + 1)
+    monkeypatch.setattr(config, "USE_SCENE_GP_PRIOR", False)
+    monkeypatch.setattr(config, "SCENE_INDEPENDENT_RIDGE", 1.0)
+    with identity_prf_operators_context():
+        result = solver.run_gls_solve(
+            cutouts, [], [], {}, (1.0, 1.0e-7), np.zeros((5, 5)), cutouts[0]["wcs"], 1,
+        )
+    assert result["memory_estimate"]["peak_bytes"] == estimate["peak_bytes"]
+    assert np.isfinite(result["model_scene"]).all()
+
+
+def test_saved_fit_prediction_is_stable_across_blur_and_calibration_ab(monkeypatch):
+    n = 7
+    wcs = _wcs(n)
+    prf_y, prf_x = np.mgrid[-200:201, -200:201]
+
+    def calibration(*args, **kwargs):
+        sigma = 50.0 if str(config.PRF_DIR).endswith("calibration-A") else 110.0
+        array = np.exp(-(prf_x**2 + prf_y**2) / (2.0 * sigma**2))
+        return array / array.sum()
+
+    monkeypatch.setattr(solver, "load_prf", calibration)
+    cutout = _flat_cutout(n, 0)
+    image_y, image_x = np.mgrid[-3:4, -3:4]
+    cutout["data"] = 1.0e-3 + 5.0e-4 * np.exp(-(image_x**2 + image_y**2) / 2.0)
+    common = {
+        "USE_SCENE_GP_PRIOR": False,
+        "SCENE_INDEPENDENT_RIDGE": 1.0e10,
+        "PRF_ORDER_PROJECT_THEN_CONVOLVE": False,
+        "PRF_OPERATOR_MODE": "anchor",
+        "PRF_SPATIAL_ANCHORS_PER_AXIS": 1,
+        "FLOAT_TRANSIENT_POSITION": False,
+    }
+    with campaign._temporary_config({
+        **common,
+        "PRF_DIR": "/synthetic/calibration-A",
+        "PRF_PREBLUR_IN_OVERSAMPLE_PIXELS": 0.0,
+    }):
+        result_a = solver.run_gls_solve(
+            [cutout], [], [], {}, (1.0, 1.0e-7), np.zeros((n, n)), wcs, 1,
+        )
+        prediction_a_before = solver.predict_cutout_model(result_a, [cutout], [], [], 0)
+    with campaign._temporary_config({
+        **common,
+        "PRF_DIR": "/synthetic/calibration-B",
+        "PRF_PREBLUR_IN_OVERSAMPLE_PIXELS": 30.0,
+    }):
+        result_b = solver.run_gls_solve(
+            [cutout], [], [], {}, (1.0, 1.0e-7), np.zeros((n, n)), wcs, 1,
+        )
+        prediction_b = solver.predict_cutout_model(result_b, [cutout], [], [], 0)
+    prediction_a_after = solver.predict_cutout_model(result_a, [cutout], [], [], 0)
+
+    np.testing.assert_allclose(prediction_a_after, prediction_a_before, rtol=0.0, atol=0.0)
+    assert not np.allclose(prediction_a_before, prediction_b, rtol=0.0, atol=1.0e-10)
+
+
+def test_singular_colocated_sources_preserve_uncertainty_shapes(tmp_path):
+    n = 5
+    wcs = _wcs(n)
+    cutout = _flat_cutout(n, 0, template=False)
+    response = solver.native_point_source_column(
+        wcs, wcs, (n, n), (n, n), "ch2", config.TRANSIENT_RA, config.TRANSIENT_DEC,
+    ).reshape(n, n)
+    cutout["data"] += 2.0e-3 * response
+    with campaign._temporary_config({
+        "DIAGNOSTIC_DIR": str(tmp_path),
+        "USE_SCENE_GP_PRIOR": False,
+        "SCENE_INDEPENDENT_RIDGE": 1.0e10,
+        "USE_NUCLEAR_POINT_SOURCE": True,
+        "NUCLEAR_POINT_RA": config.TRANSIENT_RA,
+        "NUCLEAR_POINT_DEC": config.TRANSIENT_DEC,
+        "NUCLEAR_POINT_NONNEGATIVE": False,
+        "TRANSIENT_NONNEGATIVE": False,
+        "FLOAT_TRANSIENT_POSITION": False,
+        "PRF_ORDER_PROJECT_THEN_CONVOLVE": True,
+        "PRF_OPERATOR_MODE": "anchor",
+        "PRF_SPATIAL_ANCHORS_PER_AXIS": 1,
+    }):
+        result = solver.run_gls_solve(
+            [cutout], [], [], {}, (1.0, 1.0e-7), np.zeros((n, n)), wcs, 1,
+        )
+        _, summary = postprocessing.group_and_average(
+            [dict(cutout, channel="ch2")], result,
+        )
+
+    assert result["uncertainty_status"] == "unavailable"
+    assert result["identifiability_status"] == "non_identifiable_or_singular_curvature"
+    assert result["transient_errs"].shape == (1,)
+    assert result["transient_epoch_errs"].shape == (1,)
+    assert np.isnan(result["transient_errs"][0])
+    assert np.isnan(result["transient_epoch_errs"][0])
+    assert np.isnan(result["nuclear_point_err"])
+    assert len(summary) == 1 and np.isnan(float(summary.iloc[0]["err"]))
