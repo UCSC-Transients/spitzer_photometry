@@ -1,6 +1,6 @@
 # Nominal native super-resolution science run
 
-This document describes the **default behavior** when you run `python main.py` from the repository root. The pipeline uses **native BCD cutouts** (no per-frame flux reprojection), a **North-up latent scene** at `PIXEL_SCALE / SUPERSAMPLE_FACTOR`, **PRF convolution** in the forward model with **project-then-convolve** ordering, an **independent-pixel** scene (GP prior off) with a small diagonal ridge, a **delta-function transient** (handled in the solver/PRF path, not as scene grid pixels) with **shared floating sky position** and **per-science-BCD fluxes** (templates pinned to zero flux), and optional masking helpers for bright cores.
+This document describes the **default behavior** when you run `python main.py` from the repository root. The pipeline uses **native BCD cutouts** (no per-frame flux reprojection), a **North-up latent scene** at `PIXEL_SCALE / SUPERSAMPLE_FACTOR`, **PRF convolution** in the forward model with **project-then-convolve** ordering, a **GP-regularized** host scene, a **delta-function transient** (handled in the solver/PRF path, not as scene grid pixels) with **shared floating sky position** and **nonnegative flux shared within one-day epochs** (templates pinned to zero flux), and optional masking helpers for bright cores.
 
 ## How to run
 
@@ -22,12 +22,12 @@ Key ideas:
 |------|---------|------|
 | Geometry | `FIT_ON_NATIVE_PIXELS`, `SUPERSAMPLE_FACTOR` | Native stamps; SR=2 scene grid vs native pixels. |
 | Cutout | `NATIVE_CUTOUT_SIZE` | After extraction, crop each stamp to a square centered on the transient (e.g. 40 px). `0` = no extra crop. |
-| Scene | `USE_SCENE_GP_PRIOR`, `SCENE_INDEPENDENT_RIDGE` | Independent pixels + tiny ridge when GP is off. |
-| Transient | `FLOAT_TRANSIENT_POSITION` | Fit RA/Dec offset of the transient PRF term (linearized step in solver). |
+| Scene | `USE_SCENE_GP_PRIOR`, `SCENE_INDEPENDENT_RIDGE` | GP interpolation is the production default; independent pixels are diagnostic only. |
+| Transient | `FLOAT_TRANSIENT_POSITION` | Fit RA/Dec offset of the transient PRF term (iterated linearization in solver). |
 | PRF | `PRF_ORDER_PROJECT_THEN_CONVOLVE` | Forward model order: scene → native grid → PRF. |
-| Normal equations | `PRF_GLS_LTWL_FULL_MAX_PIXELS` | If scene pixel count ≤ cap, build full dense scene block \(A^\top W A\) for the PRF/native path (memory heavy; cap protects huge grids). |
-| CR mask | `CR_BRIGHT_CORE_GUARD_*` | Reduce spurious CR flags on bright galaxy structure; `CENTER=nuclear` uses `NUCLEAR_POINT_RA/DEC`. |
-| Unmask | `UNMASK_SIGMA_INF_*` | Replace pre-existing `sigma=inf` inside a radius with a local median σ so the nucleus is not dropped for bad header masks. |
+| Normal equations | `SOLVER_DENSE_MEMORY_LIMIT_BYTES` | Exact dense likelihood with a preallocation memory guard. Legacy Hessian cap is no longer used. |
+| CR mask | Exposure consensus | Compare aligned peer exposures; preserve repeatable nuclear structure. |
+| Unmask | `UNMASK_SIGMA_INF_RADIUS_PX=0` | Disabled in production; retain instrument masks. |
 
 To change the nominal run permanently, either edit `nominal_overrides` in `main.py` or set the same keys on `src/config.py` and remove/adjust the temporary overrides.
 
@@ -36,7 +36,7 @@ To change the nominal run permanently, either edit `nominal_overrides` in `main.
 1. Discover FITS, build catalog, split science vs template by `SPLIT_DATE_MJD`.
 2. Deep template mosaic, median stack, alignment of all frames.
 3. Extract **native** analysis cutouts; optional fixed-size crop (`NATIVE_CUTOUT_SIZE`).
-4. Local CR mask on cutouts (`apply_native_cutout_cr_mask`); optional `unmask_sigma_inf_in_radius` near nuclear/transient.
+4. Exposure-consensus CR rejection preserves repeatable nuclear structure. Nuclear unmasking is disabled in the nominal run.
 5. Star list from the deep template (solver uses nearby stars on native stamps).
 6. Joint MAP/GLS solve (`solver.run_gls_solve`) with PRF and transient terms as implemented in `src/solver.py`.
 7. `main.py` runs reconstruction and diagnostics (light curve CSV/PNG, residual PDFs, stacked residuals with/without transient, fit quality JSON).
@@ -73,3 +73,25 @@ pytest tests/
 ```
 
 (Add or extend tests when changing solver masks or forward-model order.)
+
+## Review implementation notes (2026-11-20)
+
+The transient is evaluated directly from the detector-integrated PRF on native
+pixels. Its amplitude is total model flux in Jy and is independent of the latent
+scene SR factor; a cropped stamp is not renormalized. Shared flux entries in the
+per-BCD CSV are repeated measurements of the same fitted parameter, not independent
+estimates to average again. `Epoch_Gap_Warning` flags neighboring spans over one
+and under two days. Backgrounds remain per BCD.
+
+Missing instrument PRFs raise an error. Synthetic campaign mode explicitly selects
+an analytic PRF. The experimental central-annulus penalty is disabled. Exact dense
+normal equations replace the old diagonal likelihood approximation, with an explicit
+memory guard; large runs may require reducing the ROI until a scalable exact solver
+is implemented. Curvature errors are local Gaussian approximations, especially near
+the nonnegative boundary. See `CODE_REVIEW_2026-11-20.md` for remaining acceptance work.
+
+Run deterministic recovery diagnostics with:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python scripts/validate_internal_consistency.py
+```

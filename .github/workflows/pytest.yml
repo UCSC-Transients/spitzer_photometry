@@ -4,16 +4,62 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+env:
+  MPLBACKEND: Agg
+  MPLCONFIGDIR: /tmp/spitzer-matplotlib
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
 
 jobs:
   fast:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Dependency consistency
+        run: pip check
+      - name: Tests (not slow)
+        run: pytest -m "not slow and not real_calibration" --tb=short -q --junitxml=test-results/unit.xml
+      - name: Synthetic flux recovery and diagnostic plots
+        run: python scripts/validate_internal_consistency.py --trials 3 --output-dir test-results/internal-consistency
+      - name: Zero-flux boundary diagnostic
+        run: python scripts/validate_internal_consistency.py --trials 3 --truth-flux-jy 0 --output-dir test-results/zero-flux
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.python }}
+          path: test-results/
+  extended:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install
-        run: pip install -r requirements.txt
-      - name: Tests (not slow)
-        run: pytest -m "not slow" --tb=short -q
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Full synthetic regressions
+        run: pytest -m "not real_calibration" --tb=short -q --junitxml=test-results/extended.xml
+      - name: Upload diagnostics and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-diagnostics
+          path: |
+            test-results/
+            output/diagnostics/

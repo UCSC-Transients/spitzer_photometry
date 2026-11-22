@@ -3,6 +3,23 @@ import pytest
 from astropy.wcs import WCS
 
 from src import config
+from src import solver
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_unit_prf(monkeypatch, request, tmp_path):
+    """Unit tests use an analytic calibration, never machine-local FITS files.
+
+    Real-calibration tests opt out explicitly. Individual tests can replace this
+    PRF to exercise their own calibrated response or fault injection.
+    """
+    monkeypatch.setattr(config, 'DIAGNOSTIC_DIR', str(tmp_path / 'diagnostics'))
+    if request.node.get_closest_marker('real_calibration'):
+        return
+    yy, xx = np.mgrid[-150:151, -150:151]
+    prf = np.exp(-(xx**2 + yy**2) / (2 * 60.**2))
+    prf /= prf.sum()
+    monkeypatch.setattr(solver, 'load_prf', lambda *a, **kw: prf)
 
 
 @pytest.fixture(autouse=True)

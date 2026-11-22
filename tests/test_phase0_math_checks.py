@@ -65,15 +65,19 @@ def test_scene_lock_and_monotonic_constraints_exist_in_current_only():
     assert "ENFORCE_GP_CENTRAL_MONOTONICITY" not in legacy
 
 
-def test_operator_approximation_path_is_default_enabled():
-    """
-    Phase-0 check 4:
-    Validate that current solver has full-vs-diag LTWL branches and default
-    config uses the `_project_native_to_scene` diagonal path for large scenes.
-    """
-    curr = Path(solver.__file__).read_text(encoding="utf-8")
-    assert "PRF_GLS_LTWL_DIAG_MAX_PIXELS" in curr
-    assert "ltwl_diag_cap" in curr
-    assert "elif ltwl_diag_cap > 0 and n_scene <= ltwl_diag_cap" in curr
-    assert "w_scene_diag = _project_native_to_scene" in curr
-    assert int(getattr(config, "PRF_GLS_LTWL_DIAG_MAX_PIXELS", -1)) == 0
+def test_frame_design_matrix_matches_forward_and_adjoint(monkeypatch):
+    """The likelihood matrix must retain coupling, not approximate it diagonally."""
+    import numpy as np
+    from astropy.wcs import WCS
+    w = WCS(naxis=2)
+    w.wcs.crpix = [2, 2]
+    w.wcs.crval = [10, 20]
+    w.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+    w.wcs.cdelt = [-1 / 3600, 1 / 3600]
+    shape = (3, 3)
+    operator = np.eye(9) + .2 * np.ones((9, 9))
+    monkeypatch.setattr(solver, '_apply_frame_forward_operator',
+                        lambda x, *a, **kw: (operator @ x.ravel()).reshape(shape))
+    matrix = solver.frame_design_matrix(w, w, shape, shape, 'ch2')
+    np.testing.assert_allclose(matrix, operator)
+    assert np.all((matrix.T @ matrix)[0, 1:] > 0)

@@ -1,6 +1,6 @@
 """Pipeline through joint MAP solve (shared by main.py and standalone tools).
 
-Native-fit path (`FIT_ON_NATIVE_PIXELS`): optional square crop (`NATIVE_CUTOUT_SIZE`), local CR mask,
+Native-fit path (`FIT_ON_NATIVE_PIXELS`): optional square crop (`NATIVE_CUTOUT_SIZE`), exposure-consensus CR mask,
 then optional ``unmask_sigma_inf_in_radius`` before star selection and ``solver.run_gls_solve``.
 GP hyperparameters are optimized only when ``USE_SCENE_GP_PRIOR`` and ``GP_OPTIMIZE_HYPERPARAMS``
 are both enabled.
@@ -12,6 +12,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.utils.exceptions import AstropyWarning
+from reproject import reproject_interp
 
 from . import config, diagnostics, gp_model, native_fit_campaign, preprocessing, run_manifest, solver
 
@@ -55,14 +56,7 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         full_list.append(f)
     full_list.sort(key=lambda x: x.get('mjd', 0))
 
-    curr_epoch = 0
-    last_mjd = full_list[0]['mjd']
-    for f in full_list:
-        if (f['mjd'] - last_mjd) > config.EPOCH_WINDOW_DAYS:
-            curr_epoch += 1
-        f['epoch_id'] = curr_epoch
-        last_mjd = f['mjd']
-    n_epochs = curr_epoch + 1
+    n_epochs = preprocessing.assign_flux_epochs(full_list, config.EPOCH_WINDOW_DAYS)
 
     target = SkyCoord(config.TRANSIENT_RA, config.TRANSIENT_DEC, unit='deg')
 
@@ -111,6 +105,8 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     fit_on_native = bool(getattr(config, 'FIT_ON_NATIVE_PIXELS', False))
     if fit_on_native:
         cutouts, cutout_wcs = preprocessing.extract_native_analysis_cutouts(full_list, target)
+        if not cutouts:
+            raise RuntimeError('No usable native cutouts were extracted')
         native_cutout_size = int(getattr(config, 'NATIVE_CUTOUT_SIZE', 0))
         # Tighter ROI around the transient for cost / conditioning; WCS slices stay consistent.
         if native_cutout_size > 0:
@@ -124,29 +120,38 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     else:
         cutouts, cutout_wcs = preprocessing.extract_analysis_cutouts(full_list, target)
 
+    if not cutouts:
+        raise RuntimeError('No usable cutouts were extracted')
+    # Native stamp WCS is not the latent sky grid. Keep the requested SR scale.
+    scene_wcs, scene_shape = native_fit_campaign._scene_wcs_from_bcd_footprints(
+        [c['wcs'] for c in cutouts], cutouts[0]['data'].shape,
+        config.PIXEL_SCALE / config.SUPERSAMPLE_FACTOR,
+        [(target.ra.deg, target.dec.deg)], int(config.NATIVE_SCENE_PAD_PX))
+
     print("\n[Step 8] Final CR Pass on Cutouts...")
-    tpl_cutouts = [c['data'] for c in cutouts if c['is_template']]
+    tpl_cutouts = [reproject_interp((c['data'], c['wcs']), scene_wcs, shape_out=scene_shape)[0]
+                   for c in cutouts if c['is_template']]
     if tpl_cutouts:
         median_stamp = np.nanmedian(np.array(tpl_cutouts), axis=0)
     else:
-        median_stamp = np.zeros(cutouts[0]['data'].shape)
+        median_stamp = np.zeros(scene_shape)
 
     if fit_on_native:
+        native_fit_campaign.apply_consensus_cr_masks(cutouts)
         for c in cutouts:
-            native_fit_campaign.apply_native_cutout_cr_mask(c)
             # In-place: recover pixels that were already inf-sigma in the FITS (not from our CR pass).
             native_fit_campaign.unmask_sigma_inf_in_radius(
                 c,
                 float(getattr(config, 'UNMASK_SIGMA_INF_RADIUS_PX', 0.0)),
                 str(getattr(config, 'UNMASK_SIGMA_INF_CENTER', 'nuclear')),
             )
-        print("   [Native fit] CR pixels set to inf sigma (masked from fit); using template star list.")
+        print("   [Native fit] Exposure-consensus CR masks applied; using template star list.")
         raw_stars_table = template_stars_table
     else:
-        preprocessing.flag_cosmic_rays(cutouts, median_stamp, cutout_wcs, target)
+        native_fit_campaign.apply_consensus_cr_masks(cutouts)
         print("   Detecting stars in analysis cutout (Robust Method)...")
         raw_stars_table = preprocessing.detect_sources(
-            median_stamp, cutout_wcs, sigma_map=None, is_template=True, mask_nucleus=False,
+            median_stamp, scene_wcs, sigma_map=None, is_template=True, mask_nucleus=False,
         )
 
     solver_stars = []
@@ -197,7 +202,7 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         gp_params,
         (gp_ell, gp_var),
         median_stamp,
-        cutout_wcs,
+        scene_wcs,
         n_epochs,
     )
 
@@ -205,20 +210,7 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         print("CRITICAL ERROR: Solver returned None.")
         return None
 
-    fitted_fluxes = results['star_fluxes']
-    final_star_fluxes = []
-    for i, flux in enumerate(fitted_fluxes):
-        if flux <= 0.0:
-            print(
-                f"   [Warning] Solver returned {flux:.2e} for Star {i}. "
-                f"Using Init Flux: {solver_init_fluxes[i]:.2e}",
-            )
-            final_star_fluxes.append(solver_init_fluxes[i])
-        else:
-            final_star_fluxes.append(flux)
-
-    full_flux_list = np.array(final_star_fluxes)
-    results['star_fluxes'] = full_flux_list
+    full_flux_list = np.asarray(results['star_fluxes'], dtype=float)
 
     print("\n   [Final Fluxes for Reconstruction]")
     for i, flux in enumerate(full_flux_list):

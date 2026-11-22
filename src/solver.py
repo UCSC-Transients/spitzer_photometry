@@ -3,13 +3,15 @@ import sys
 import os
 import logging
 import warnings
+from functools import wraps, lru_cache
 from typing import List, Tuple
 
 import numpy as np
-from scipy.linalg import lstsq
+from scipy.linalg import lstsq, cho_factor, cho_solve
 from scipy.sparse import coo_matrix
+from scipy.sparse import issparse
 from scipy.optimize import Bounds, minimize
-from scipy.ndimage import gaussian_filter, binary_erosion
+from scipy.ndimage import gaussian_filter, binary_erosion, map_coordinates, shift as ndimage_shift
 from scipy.signal import fftconvolve
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -18,6 +20,7 @@ from astropy.coordinates import SkyCoord
 from reproject import reproject_interp
 from . import config, gp_model
 from .pmap_correction import iracpc_pmap_corr
+from .instrument import frame_channel
 
 # Spitzer BCD headers often list both CD and CDELT; Astropy prefers CD and
 # emits repetitive "cdelt ignored" warnings whenever the WCS is inspected.
@@ -35,12 +38,22 @@ _PROJECTION_CACHE = {}
 GRID_CENTERS = np.array([25, 77, 129, 181, 233])
 
 
-def _read_fits_image_array(path):
+@lru_cache(maxsize=8)
+def _read_fits_image_cached(path, modified_ns, file_size):
     """Load primary HDU data; ignore common SSC-style END-card header noise."""
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=AstropyWarning)
         with fits.open(path, memmap=False) as hdul:
-            return np.nan_to_num(hdul[0].data, nan=0.0)
+            data = np.asarray(hdul[0].data, dtype=float)
+            if data.ndim != 2 or not np.isfinite(data).all() or np.sum(data) <= 0:
+                raise ValueError(f'Invalid PRF image: {path}')
+            data.setflags(write=False)
+            return data
+
+def _read_fits_image_array(path):
+    path = os.path.realpath(path)
+    stat = os.stat(path)
+    return _read_fits_image_cached(path, stat.st_mtime_ns, stat.st_size)
 
 def get_gaussian_kernel_array(size=2001, fwhm=2.0, oversample=100):
     y, x = np.mgrid[0:size, 0:size]
@@ -121,8 +134,9 @@ def load_interpolated_prf(channel, x_det, y_det):
     p01 = load_real_prf_file(channel, iy, ix-1)
     p11 = load_real_prf_file(channel, iy, ix)
     if all(p is None for p in [p00, p10, p01, p11]):
-        return get_gaussian_kernel_array(size=2001, fwhm=2.0, oversample=config.PRF_OVERSAMPLE)
-    if p00 is None: p00 = p10 if p10 else (p01 if p01 else p11)
+        raise FileNotFoundError(f'No PRF calibration for {channel} in {config.PRF_DIR}')
+    if p00 is None:
+        p00 = next(p for p in (p10, p01, p11) if p is not None)
     if p10 is None: p10 = p00;
     if p01 is None: p01 = p00;
     if p11 is None: p11 = p10
@@ -133,9 +147,16 @@ def load_interpolated_prf(channel, x_det, y_det):
     return eff_prf
 
 def load_prf(channel, x_det=None, y_det=None):
+    if bool(getattr(config, 'USE_SYNTHETIC_PRF', False)):
+        return _synthetic_prf(int(config.PRF_OVERSAMPLE))
     if x_det is None: x_det = 128
     if y_det is None: y_det = 128
     return load_interpolated_prf(channel, x_det, y_det)
+
+@lru_cache(maxsize=2)
+def _synthetic_prf(oversample):
+    """Explicit debug calibration, independent of installed instrument files."""
+    return get_gaussian_kernel_array(size=10 * oversample + 1, fwhm=2., oversample=oversample)
 
 # --- Core Solver ---
 
@@ -162,11 +183,11 @@ def _center_kernel_for_convolution(ker):
     if k.ndim != 2 or k.size == 0:
         return k
     iy, ix = np.unravel_index(int(np.nanargmax(np.abs(k))), k.shape)
-    cy = k.shape[0] // 2
-    cx = k.shape[1] // 2
+    cy = (k.shape[0] - 1) // 2
+    cx = (k.shape[1] - 1) // 2
     dy = int(cy - iy)
     dx = int(cx - ix)
-    return np.roll(np.roll(k, dy, axis=0), dx, axis=1)
+    return ndimage_shift(k, (dy, dx), order=0, mode='constant', cval=0., prefilter=False)
 
 
 def generate_prf_fast(scene_wcs, raw_wcs, prf_model, ra, dec, scene_shape, channel='ch1', is_full_array=False):
@@ -175,15 +196,19 @@ def generate_prf_fast(scene_wcs, raw_wcs, prf_model, ra, dec, scene_shape, chann
     
     ph, pw = prf_model.shape
     prf_wcs = WCS(naxis=2)
-    prf_wcs.wcs.crpix = [pw / 2.0, ph / 2.0]
+    prf_wcs.wcs.crpix = [(pw + 1) / 2.0, (ph + 1) / 2.0]
     prf_wcs.wcs.crval = [ra, dec]
     prf_wcs.wcs.ctype = raw_wcs.wcs.ctype
     
-    if hasattr(raw_wcs.wcs, 'cd'):
-        prf_wcs.wcs.cd = raw_wcs.wcs.cd / float(config.PRF_OVERSAMPLE)
-    else:
-        prf_wcs.wcs.cdelt = raw_wcs.wcs.cdelt / float(config.PRF_OVERSAMPLE)
-        prf_wcs.wcs.pc = raw_wcs.wcs.pc
+    # Calibration sampling is fixed; a rescaled analysis WCS must not rescale
+    # the instrumental PRF. Preserve detector orientation/parity and aspect.
+    linear = np.asarray(raw_wcs.pixel_scale_matrix, dtype=float)
+    native_scale_deg = np.sqrt(abs(np.linalg.det(linear)))
+    if not np.isfinite(native_scale_deg) or native_scale_deg <= 0:
+        raise ValueError('PRF orientation WCS has a singular pixel-scale matrix')
+    prf_scale_arcsec = float(getattr(config, 'PRF_PIXEL_SCALE_ARCSEC',
+                                    config.PIXEL_SCALE / config.PRF_OVERSAMPLE))
+    prf_wcs.wcs.cd = linear / native_scale_deg * (prf_scale_arcsec / 3600.)
     
     blur = getattr(config, 'PRF_PREBLUR_IN_OVERSAMPLE_PIXELS', None)
     if blur is not None and float(blur) > 0.0:
@@ -302,12 +327,7 @@ def _apply_prf_operator_from_bundle(img, kernels, weights, wsum):
     img = np.asarray(img, dtype=np.float64)
     out = np.zeros_like(img, dtype=np.float64)
     for ker, wt in zip(kernels, weights):
-        # Use circular convolution on the scene grid (FFT) with a kernel whose peak
-        # is at the array center (ifftshift to zero-lag). This yields a consistent
-        # linear operator with a well-defined Euclidean adjoint.
-        ker0 = np.fft.ifftshift(np.asarray(ker, dtype=np.float64))
-        K = np.fft.fft2(ker0)
-        out += np.fft.ifft2(np.fft.fft2(img) * K).real * wt
+        out += fftconvolve(img, np.asarray(ker, dtype=float), mode='same') * wt
     return out / wsum
 
 
@@ -317,9 +337,10 @@ def _apply_prf_adjoint_from_bundle(y, kernels, weights, wsum):
     acc = np.zeros_like(z, dtype=np.float64)
     for ker, wt in zip(kernels, weights):
         sig = z * wt
-        ker0 = np.fft.ifftshift(np.asarray(ker, dtype=np.float64))
-        K = np.fft.fft2(ker0)
-        acc += np.fft.ifft2(np.fft.fft2(sig) * np.conj(K)).real
+        ker = np.asarray(ker, dtype=float)
+        full = fftconvolve(sig, ker[::-1, ::-1], mode='full')
+        y0, x0 = ker.shape[0] // 2, ker.shape[1] // 2
+        acc += full[y0:y0 + z.shape[0], x0:x0 + z.shape[1]]
     return acc
 
 
@@ -465,6 +486,7 @@ def _apply_prf_adjoint(y_scene, scene_wcs, w_native, scene_shape, channel, is_fu
 def _wcs_key(w: WCS):
     ww = w.wcs
     return (
+        tuple(np.asarray(w.pixel_scale_matrix, dtype=float).ravel().tolist()),
         tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
         tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
         tuple(np.asarray(getattr(ww, "cdelt", [np.nan, np.nan]), dtype=float).ravel().tolist()),
@@ -491,7 +513,7 @@ def _sip_distortion_fingerprint(w: WCS) -> tuple:
             parts.append((name, None))
             continue
         parts.append((name, tuple(np.asarray(arr, dtype=np.float64).ravel().tolist())))
-    return ("sip", tuple(parts))
+    return ("sip", tuple(np.asarray(sip.crpix, dtype=float)), tuple(parts))
 
 
 def _wcs_projection_cache_key(w: WCS) -> tuple:
@@ -644,6 +666,32 @@ def _apply_frame_adjoint_operator(
     ).reshape(scene_shape)
 
 
+def frame_design_matrix(scene_wcs, native_wcs, scene_shape, native_shape, channel, *, is_full_array=False):
+    """Assemble the exact small/dense frame operator using its cheaper dimension.
+
+    The adjoint construction avoids one impulse per SR pixel when native stamps
+    are smaller. Both paths describe the identical likelihood, never a diagonal
+    surrogate. Large problems are guarded by the solver's dense-memory budget.
+    """
+    n_scene, n_native = int(np.prod(scene_shape)), int(np.prod(native_shape))
+    matrix = np.empty((n_native, n_scene))
+    if n_native < n_scene:
+        impulse = np.zeros(native_shape)
+        for i in range(n_native):
+            impulse.flat[i] = 1.
+            matrix[i] = _apply_frame_adjoint_operator(impulse, scene_wcs, native_wcs,
+                            scene_shape, channel, is_full_array=is_full_array).ravel()
+            impulse.flat[i] = 0.
+    else:
+        impulse = np.zeros(scene_shape)
+        for i in range(n_scene):
+            impulse.flat[i] = 1.
+            matrix[:, i] = _apply_frame_forward_operator(impulse, scene_wcs, native_wcs,
+                            scene_shape, native_shape, channel, is_full_array=is_full_array).ravel()
+            impulse.flat[i] = 0.
+    return matrix
+
+
 def _estimate_prf_support_radius_px(kernels, frac=0.999):
     """
     Estimate a conservative PRF support radius in scene pixels from anchor kernels.
@@ -703,6 +751,35 @@ def column_L_pointsource(
     ).ravel()
 
 
+def native_point_source_column(scene_wcs, native_wcs, scene_shape, native_shape,
+                               channel, ra_deg, dec_deg, *, is_full_array=False):
+    """Sample the detector-integrated PRF directly, independently of the GP grid.
+
+    IRAC PRFs already include detector sampling (IRAC handbook section 4.9).
+    The integral of the calibration table defines unit flux; cropping never
+    renormalizes missing wings. scene_* arguments retain the renderer interface.
+    """
+    detector_wcs = getattr(native_wcs, '_detector_wcs', native_wcs)
+    dx, dy = detector_wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+    prf = np.asarray(load_prf(channel, float(dx), float(dy)), dtype=float)
+    oversample = float(config.PRF_OVERSAMPLE)
+    normalization = float(np.sum(prf)) / oversample**2
+    if not np.isfinite(normalization) or normalization <= 0:
+        raise ValueError('PRF must have positive finite integrated response')
+    x, y = native_wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+    yy, xx = np.indices(native_shape, dtype=float)
+    coords = [(prf.shape[0] - 1) / 2 + (yy - float(y)) * oversample,
+              (prf.shape[1] - 1) / 2 + (xx - float(x)) * oversample]
+    response = map_coordinates(prf, coords, order=1, mode='constant', cval=0.) / normalization
+    if bool(getattr(config, 'PRF_APPLY_PMAP_GAIN', False)):
+        correction = iracpc_pmap_corr(1., dx, dy, channel, pmap_dir=config.PMAP_DIR,
+                                      threshold_occ=False, full_array=is_full_array)
+        if not np.isfinite(correction) or correction <= 0:
+            raise ValueError('Invalid p-map correction for point source')
+        response /= correction
+    return response.ravel()
+
+
 def _transient_prf_pos_derivatives(
     scene_wcs, w_native, ra0, dec0, scene_shape, channel, is_full_array, eps_deg,
 ):
@@ -737,7 +814,8 @@ def convolved_delta_column(
 
     Mathematically this is δ(ra,dec) ⊗ PRF_i on the analysis scene grid for frame i.
     """
-    tx, ty = w_native.world_to_pixel_values(ra_deg, dec_deg)
+    detector_wcs = getattr(w_native, '_detector_wcs', w_native)
+    tx, ty = detector_wcs.world_to_pixel_values(ra_deg, dec_deg)
     prf = load_prf(channel, tx, ty)
     return generate_prf_fast(
         scene_wcs, w_native, prf, ra_deg, dec_deg, scene_shape,
@@ -797,6 +875,116 @@ def host_core_gaussian_column(scene_wcs, ra_deg, dec_deg, sigma_pix, scene_shape
     if s > 0:
         g /= s
     return g.ravel()
+
+
+def nuclear_data_weight_center_radec():
+    """Sky (deg) center for optional native-disk σ scaling (`NUCLEAR_DATA_WEIGHT_*`)."""
+    mode = str(getattr(config, "NUCLEAR_DATA_WEIGHT_CENTER", "transient")).strip().lower()
+    if mode == "nuclear":
+        return float(config.NUCLEAR_POINT_RA), float(config.NUCLEAR_POINT_DEC)
+    if mode == "host":
+        ra = getattr(config, "HOST_CORE_RA", None)
+        dec = getattr(config, "HOST_CORE_DEC", None)
+        if ra is not None and dec is not None:
+            return float(ra), float(dec)
+    if mode in ("galaxy_extended", "galaxy", "extended"):
+        return float(config.GALAXY_EXTENDED_CENTER_RA), float(config.GALAXY_EXTENDED_CENTER_DEC)
+    return float(config.TRANSIENT_RA), float(config.TRANSIENT_DEC)
+
+
+def _apply_sigma_quadrature_floor(sigma: np.ndarray) -> np.ndarray:
+    """σ ← sqrt(σ² + floor²) on finite pixels (same units as σ, typically Jy per pixel)."""
+    floor = float(getattr(config, "SIGMA_QUADRATURE_FLOOR_JY", 0.0))
+    if floor <= 0.0:
+        return sigma
+    s = np.asarray(sigma, dtype=np.float64)
+    out = s.copy()
+    fin = np.isfinite(out) & (out < 1e19)
+    out[fin] = np.sqrt(np.clip(out[fin], 0.0, None) ** 2 + floor ** 2)
+    return out
+
+
+def _apply_sigma_relative_flux_exponent(sigma: np.ndarray, entry: dict) -> np.ndarray:
+    """
+    Per-cutout scaling σ *= (|data|/median(|data|))^exponent on pixels with valid σ and data.
+
+    Default exponent 0 leaves σ unchanged. Negative exponent reduces σ in brighter-than-median
+    pixels if σ was constructed like √flux — see config docstring.
+    """
+    exp = float(getattr(config, "SIGMA_RELATIVE_FLUX_EXPONENT", 0.0))
+    if exp == 0.0:
+        return sigma
+    d = entry.get("data")
+    if d is None:
+        return sigma
+    d = np.asarray(d, dtype=np.float64)
+    s = np.asarray(sigma, dtype=np.float64)
+    if d.shape != s.shape:
+        return sigma
+    vm = np.isfinite(s) & np.isfinite(d) & (s > 0.0) & (s < 1e20)
+    if not np.any(vm):
+        return sigma
+    med = float(np.median(np.abs(d[vm])))
+    if med <= 0.0:
+        return sigma
+    amp = np.maximum(np.abs(d), 1e-30) / med
+    out = s.copy()
+    out[vm] *= amp[vm] ** exp
+    return out
+
+
+def _apply_nuclear_disk_sigma_scale(sigma: np.ndarray, entry: dict) -> np.ndarray:
+    """
+    Multiply σ inside a native-pixel disk (``NUCLEAR_DATA_WEIGHT_*``).
+    """
+    s = np.asarray(sigma, dtype=np.float64)
+    rad = float(getattr(config, "NUCLEAR_DATA_WEIGHT_RADIUS_NATIVE_PX", 0.0))
+    scale = float(getattr(config, "NUCLEAR_DATA_WEIGHT_SIGMA_SCALE", 1.0))
+    if rad <= 0.0 or scale == 1.0:
+        return s
+    wcs = entry.get("raw_wcs") or entry.get("wcs")
+    if wcs is None:
+        return s
+    h, w = int(s.shape[0]), int(s.shape[1])
+    ra_c, dec_c = nuclear_data_weight_center_radec()
+    xc, yc = wcs.world_to_pixel_values(ra_c, dec_c)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    rr = np.hypot(xx - float(xc), yy - float(yc))
+    smap = np.where(rr <= rad, scale, 1.0).astype(np.float64)
+    return s * smap
+
+
+def effective_native_sigma_for_fit(sigma: np.ndarray, entry: dict) -> np.ndarray:
+    """
+    Full χ² σ pipeline for native cutouts: quadrature floor, flux exponent, nuclear disk.
+
+    Defaults reproduce pipeline σ (all optional steps off).
+    """
+    s = np.asarray(sigma, dtype=np.float64)
+    s = _apply_sigma_quadrature_floor(s)
+    s = _apply_sigma_relative_flux_exponent(s, entry)
+    s = _apply_nuclear_disk_sigma_scale(s, entry)
+    return s
+
+
+def valid_fit_mask(entry: dict, sigma: np.ndarray | None = None) -> np.ndarray:
+    """Pixels with signal coverage and positive, finite raw/effective uncertainty.
+
+    Zero data remains the legacy coverage sentinel until extraction supplies a
+    separate footprint mask. Invalid raw uncertainties cannot be repaired by an
+    optional weighting transformation.
+    """
+    data = np.asarray(entry['data'], dtype=float)
+    raw = np.asarray(entry['sigma'], dtype=float)
+    effective = raw if sigma is None else np.asarray(sigma, dtype=float)
+    return ((data != 0) & np.isfinite(data) & np.isfinite(raw) & (raw > 0)
+            & (raw < 1e20) & np.isfinite(effective) & (effective > 0)
+            & (effective < 1e20))
+
+
+def native_sigma_with_nuclear_weighting(sigma: np.ndarray, entry: dict) -> np.ndarray:
+    """Alias for :func:`effective_native_sigma_for_fit` (historical name)."""
+    return effective_native_sigma_for_fit(sigma, entry)
 
 
 def _gp_profile_center_world():
@@ -862,12 +1050,18 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
     rhs = np.asarray(rhs, dtype=np.float64).ravel()
     n = H.shape[0]
     H = 0.5 * (H + H.T)
+    # Diagonal scaling keeps Jy amplitudes and degree offsets numerically
+    # comparable without changing the objective or feasible solution.
+    scale = np.sqrt(np.maximum(np.abs(np.diag(H)), np.finfo(float).tiny))
     if x0 is None:
         try:
             x0 = np.linalg.solve(H, rhs)
         except np.linalg.LinAlgError:
             x0 = lstsq(H, rhs, check_finite=False, lapack_driver='gelsy')[0]
-    x0 = np.clip(x0, lb, ub)
+    x0 = np.clip(x0, lb, ub) * scale
+    H = H / scale[:, None] / scale[None, :]
+    rhs = rhs / scale
+    lb, ub = lb * scale, ub * scale
 
     def fun(theta):
         return 0.5 * float(theta @ H @ theta) - float(rhs @ theta)
@@ -882,7 +1076,7 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
         method='L-BFGS-B',
         jac=jac,
         bounds=bnds,
-        options={'maxiter': 400, 'ftol': 1e-12},
+        options={'maxiter': 2000, 'ftol': 1e-14, 'gtol': 1e-8},
     )
     if not res.success:
         _log.warning("Bounded MAP (L-BFGS-B) did not converge: %s; falling back to trust-constr.", res.message)
@@ -896,13 +1090,20 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
             options={'verbose': 0, 'maxiter': 300},
         )
         if not res.success:
-            _log.warning("Bounded MAP (trust-constr) did not converge: %s", res.message)
-    return res.x
+            raise RuntimeError(f"Bounded MAP failed to converge: {res.message}")
+    if not np.isfinite(res.x).all():
+        raise RuntimeError('Bounded MAP returned nonfinite parameters')
+    gradient = H @ res.x - rhs
+    gradient[(res.x <= lb + 1e-8) & (gradient > 0)] = 0.
+    gradient[(res.x >= ub - 1e-8) & (gradient < 0)] = 0.
+    if np.max(np.abs(gradient)) > 1e-5 * max(1., np.max(np.abs(rhs))):
+        raise RuntimeError('Bounded MAP failed projected-gradient convergence check')
+    return res.x / scale
 
 
 def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization, deep_template, template_wcs, n_epochs):
     """
-    Joint MAP fit: GP prior on static scene, one transient flux per science BCD,
+    Joint MAP fit: GP prior on static scene, one transient flux per science epoch,
     star fluxes (shared across all BCDs), per-BCD backgrounds.
     Template BCDs have no transient term.
 
@@ -913,12 +1114,28 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     """
     global DEBUG_DUMPED
     DEBUG_DUMPED = False
+    # Geometry depends on mutable masks, epoch assignments and configuration.
+    # Reuse within a solve is safe; reuse across independent fits is not.
+    _GEOMETRY_CACHE.clear()
+    _PRF_OPERATOR_BUNDLE_CACHE.clear()
+    _PRF_NATIVE_OPERATOR_BUNDLE_CACHE.clear()
+    _PRF_EXACT_OPERATOR_CACHE.clear()
     
     if not cutouts: return None
+    for entry in cutouts:
+        if not np.any(valid_fit_mask(entry, effective_native_sigma_for_fit(entry['sigma'], entry))):
+            raise ValueError(f"No valid fit pixels in {entry.get('filename', '<unnamed frame>')}")
+    if bool(getattr(config, 'FLOAT_NUCLEAR_POINT_POSITION', False)):
+        raise NotImplementedError('Floating nuclear-point position is not implemented; use a fixed position')
     scene_shape = (cutouts[0]['data'].shape[0], cutouts[0]['data'].shape[1])
     if deep_template is not None and np.ndim(deep_template) == 2:
         scene_shape = (int(deep_template.shape[0]), int(deep_template.shape[1]))
     n_scene = scene_shape[0]*scene_shape[1]
+    n_blocks = 2 if isinstance(gp_params, dict) and gp_params.get('ell2') is not None else 1
+    estimated_bytes = 8 * (n_blocks * n_scene + len(cutouts) + len(stars) + 4)**2 * 6
+    if estimated_bytes > int(getattr(config, 'SOLVER_DENSE_MEMORY_LIMIT_BYTES', 4_000_000_000)):
+        raise MemoryError(f'Dense fit estimated at {estimated_bytes / 1e9:.2f} GB; '
+                          'reduce the scene footprint/SR or use a validated sparse solver')
     
     results = {
         'transient_fluxes': np.zeros(len(cutouts)),
@@ -944,6 +1161,10 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         'nuclear_point_err': 0.0,
         'bcd_backgrounds': np.zeros(len(cutouts)),
         'gp_prior_params': {},
+        'model_config': {name: getattr(config, name) for name in dir(config)
+                         if name.isupper() and isinstance(getattr(config, name),
+                            (str, int, float, bool, tuple, list, type(None)))},
+        'effective_sigmas': [effective_native_sigma_for_fit(c['sigma'], c).copy() for c in cutouts],
     }
 
     try:
@@ -1015,9 +1236,10 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             monotonic_terms = _build_central_annulus_terms(scene_wcs, scene_shape)
             science_epoch_ids = sorted({int(c['epoch_id']) for c in cutouts if not c.get('is_template')})
             science_frame_indices = [i for i, c in enumerate(cutouts) if not c.get('is_template')]
-            n_sci_ep = len(science_frame_indices)
-            sci_frame_to_idx = {int(i): k for k, i in enumerate(science_frame_indices)}
             sci_ep_to_idx = {eid: k for k, eid in enumerate(science_epoch_ids)}
+            n_sci_ep = len(science_epoch_ids)
+            sci_frame_to_idx = {int(i): sci_ep_to_idx[int(cutouts[i]['epoch_id'])]
+                                for i in science_frame_indices}
             scene_data_support = np.zeros(scene_shape, dtype=bool)
             base_supp_thr = float(getattr(config, 'NATIVE_SCENE_SUPPORT_THRESHOLD', 0.85))
             # Native-valid support is projected onto an SR scene grid; at higher SR the
@@ -1028,17 +1250,16 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             for entry in cutouts:
                 data2 = np.asarray(entry['data'], dtype=np.float64)
                 sigma2 = np.asarray(entry['sigma'], dtype=np.float64)
-                native_valid = (data2 != 0) & np.isfinite(sigma2) & (sigma2 < 1e20)
+                # GP values between sampled or masked detector pixels must remain
+                # free to interpolate; support is coverage, not P.T of fit weights.
+                native_valid = np.isfinite(data2) & (data2 != 0)
                 if not np.any(native_valid):
                     continue
                 w_bcd = entry['raw_wcs']
-                support_scene = _project_native_to_scene(
-                    native_valid.astype(np.float64),
-                    w_bcd,
-                    scene_wcs,
-                    scene_shape,
-                )
-                scene_data_support |= np.isfinite(support_scene) & (support_scene > supp_thr)
+                support_scene, _ = reproject_interp(
+                    (native_valid.astype(float), w_bcd), scene_wcs,
+                    shape_out=scene_shape, order='nearest-neighbor')
+                scene_data_support |= np.isfinite(support_scene) & (support_scene > base_supp_thr)
             scene_lock_mask = ~scene_data_support
             scene_lock_idx = np.where(scene_lock_mask.ravel())[0]
             n_host = 0
@@ -1106,7 +1327,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         monotonic_terms = g['monotonic_terms']
         science_epoch_ids = g['science_epoch_ids']
         science_frame_indices = g['science_frame_indices']
-        n_sci_ep = len(science_frame_indices)
+        n_sci_ep = len(science_epoch_ids)
         sci_frame_to_idx = g['sci_frame_to_idx']
         sci_ep_to_idx = g['sci_ep_to_idx']
         scene_data_support = g['scene_data_support']
@@ -1142,6 +1363,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         float_pos = bool(getattr(config, 'FLOAT_TRANSIENT_POSITION', False)) and n_sci_ep > 0
         eps_deg = float(getattr(config, 'TRANSIENT_POS_FD_STEP_ARCSEC', 0.05)) / 3600.0
         pos_ridge = float(getattr(config, 'TRANSIENT_POS_RIDGE', 1e12))
+        position_ra, position_dec = float(config.TRANSIENT_RA), float(config.TRANSIENT_DEC)
 
         def build_system(include_offset, f0_epoch):
             """
@@ -1164,26 +1386,33 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             # to avoid O(n_params^2) memory and O(n_params^3) runtime.
             Hloc = np.zeros((n_params, n_params))
             rhsloc = np.zeros(n_params)
-            Hloc[:n_scene, :n_scene] = Q1_inv
+            Hloc[:n_scene, :n_scene] = Q1_inv.toarray() if issparse(Q1_inv) else Q1_inv
             if use_two_scale_components and Q2_inv is not None:
-                Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene] = Q2_inv
+                Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene] = Q2_inv.toarray() if issparse(Q2_inv) else Q2_inv
 
             for i, entry in enumerate(cutouts):
                 data2 = np.asarray(entry['data'], dtype=np.float64)
-                sigma2 = np.asarray(entry['sigma'], dtype=np.float64)
+                sigma2 = effective_native_sigma_for_fit(
+                    np.asarray(entry["sigma"], dtype=np.float64),
+                    entry,
+                )
                 native_shape = data2.shape
-                d = data2.ravel()
+                d = np.where(np.isfinite(data2), data2, 0.0).ravel()
                 s = sigma2.ravel()
-                mask = (entry['data'] != 0) & np.isfinite(entry['sigma'])
+                mask = valid_fit_mask(entry, sigma2)
                 if np.sum(mask) == 0:
                     continue
 
                 w_data = np.zeros_like(d, dtype=np.float64)
                 w_data[mask.flatten()] = 1.0 / (np.clip(s[mask.flatten()], 1e-9, None)**2)
 
-                chan = 'ch2' if 'ch2' in entry['filename'] else 'ch1'
+                chan = frame_channel(entry)
                 w_bcd = entry['raw_wcs']
                 is_full = entry.get('is_full_array', False)
+                def point_column(ra, dec):
+                    return native_point_source_column(
+                        scene_wcs, w_bcd, scene_shape, native_shape, chan, ra, dec,
+                        is_full_array=is_full)
                 kernels, weights, wsum_b = _get_prf_operator_bundle(
                     scene_wcs, w_bcd, scene_shape, chan, is_full,
                 )
@@ -1209,54 +1438,16 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 # We still compute it here for diagnostics/future soft-gating use.
 
                 h_s, w_s = scene_shape
-                ltwl_full_cap = int(getattr(config, 'PRF_GLS_LTWL_FULL_MAX_PIXELS', 0))
-                ltwl_diag_cap = int(getattr(config, 'PRF_GLS_LTWL_DIAG_MAX_PIXELS', 0))
-                if ltwl_full_cap > 0 and n_scene <= ltwl_full_cap:
-                    # Full dense scene-block coupling: H_scene += A^T W A
-                    # where A maps scene pixels -> native data for this frame.
-                    Acols = np.zeros((w_data.size, n_scene), dtype=np.float64)
-                    for jj in range(n_scene):
-                        ei = np.zeros((h_s, w_s), dtype=np.float64)
-                        ei.ravel()[jj] = 1.0
-                        fwd_native = _apply_frame_forward_operator(
-                            ei, scene_wcs, w_bcd, scene_shape, native_shape, chan, is_full_array=is_full,
-                        ).ravel()
-                        Acols[:, jj] = fwd_native
-                    H_scene = Acols.T @ (Acols * w_data[:, None])
-                    Hloc[:n_scene, :n_scene] += H_scene
-                    if use_two_scale_components:
-                        Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene] += H_scene
-                        Hloc[:n_scene, n_scene:2 * n_scene] += H_scene
-                        Hloc[n_scene:2 * n_scene, :n_scene] += H_scene
-                elif ltwl_diag_cap > 0 and n_scene <= ltwl_diag_cap:
-                    for jj in range(n_scene):
-                        ei = np.zeros((h_s, w_s), dtype=np.float64)
-                        ei.ravel()[jj] = 1.0
-                        fwd_native = _apply_frame_forward_operator(
-                            ei, scene_wcs, w_bcd, scene_shape, native_shape, chan, is_full_array=is_full,
-                        ).ravel()
-                        Hloc[jj, jj] += np.dot(fwd_native, fwd_native * w_data)
-                else:
-                    w_scene_diag = _project_native_to_scene(
-                        w_data.reshape(native_shape), w_bcd, scene_wcs, scene_shape,
-                    ).ravel()
-                    np.fill_diagonal(
-                        Hloc[:n_scene, :n_scene],
-                        np.diag(Hloc[:n_scene, :n_scene]) + w_scene_diag,
-                    )
-                    if use_two_scale_components:
-                        np.fill_diagonal(
-                            Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene],
-                            np.diag(Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene]) + w_scene_diag,
-                        )
-                        np.fill_diagonal(
-                            Hloc[:n_scene, n_scene:2 * n_scene],
-                            np.diag(Hloc[:n_scene, n_scene:2 * n_scene]) + w_scene_diag,
-                        )
-                        np.fill_diagonal(
-                            Hloc[n_scene:2 * n_scene, :n_scene],
-                            np.diag(Hloc[n_scene:2 * n_scene, :n_scene]) + w_scene_diag,
-                        )
+                # All blocks must use the same exact likelihood. A diagonal
+                # approximation here is not a valid replacement for F.T W F.
+                Acols = frame_design_matrix(scene_wcs, w_bcd, scene_shape, native_shape,
+                                            chan, is_full_array=is_full)
+                H_scene = Acols.T @ (Acols * w_data[:, None])
+                Hloc[:n_scene, :n_scene] += H_scene
+                if use_two_scale_components:
+                    Hloc[n_scene:2 * n_scene, n_scene:2 * n_scene] += H_scene
+                    Hloc[:n_scene, n_scene:2 * n_scene] += H_scene
+                    Hloc[n_scene:2 * n_scene, :n_scene] += H_scene
                 lt_data = _apply_frame_adjoint_operator(
                     (w_data * d).reshape(native_shape),
                     scene_wcs, w_bcd, scene_shape, chan, is_full_array=is_full,
@@ -1270,14 +1461,8 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 col_t = None
                 b_hosts: List[np.ndarray] = []
                 if not is_tpl and n_sci_ep > 0:
-                    col_t = column_L_pointsource(
-                        scene_wcs, w_bcd, scene_shape, chan,
-                        config.TRANSIENT_RA, config.TRANSIENT_DEC,
-                        is_full_array=is_full,
-                    )
-                    col_t_native = _project_scene_to_native(
-                        col_t.reshape(scene_shape), scene_wcs, w_bcd, native_shape,
-                    ).ravel()
+                    col_t = point_column(position_ra, position_dec)
+                    col_t_native = col_t
                     ie = sci_frame_to_idx[int(i)]
                     it = idx_trans + ie
                     Hloc[it, it] += np.dot(col_t_native, col_t_native * w_data)
@@ -1295,15 +1480,9 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 cols_s = []
                 cols_s_native = []
                 for s_obj in solver_stars:
-                    col_s = column_L_pointsource(
-                        scene_wcs, w_bcd, scene_shape, chan,
-                        s_obj.ra.deg, s_obj.dec.deg,
-                        is_full_array=is_full,
-                    )
+                    col_s = point_column(s_obj.ra.deg, s_obj.dec.deg)
                     cols_s.append(col_s)
-                    cols_s_native.append(
-                        _project_scene_to_native(col_s.reshape(scene_shape), scene_wcs, w_bcd, native_shape).ravel()
-                    )
+                    cols_s_native.append(col_s)
 
                 if cols_s_native:
                     S = np.column_stack(cols_s_native)
@@ -1346,13 +1525,10 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 if n_host > 0 and len(host_scene_cols) == n_host:
                     b_hosts = []
                     for ch in host_scene_cols:
-                        b_host_scene = _apply_prf_operator_from_bundle(
-                            ch.reshape(scene_shape), kernels, weights, wsum_b,
-                        )
                         b_hosts.append(
-                            _project_scene_to_native(
-                                b_host_scene, scene_wcs, w_bcd, native_shape,
-                            ).ravel(),
+                            _apply_frame_forward_operator(
+                                ch.reshape(scene_shape), scene_wcs, w_bcd, scene_shape,
+                                native_shape, chan, is_full_array=is_full).ravel(),
                         )
                     for jh, b_host in enumerate(b_hosts):
                         ih = idx_star_end + jh
@@ -1387,14 +1563,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 if n_nps > 0 and col_nps_vec is not None:
                     inp = idx_nps
                     ra_np, dec_np = col_nps_vec
-                    col_np = column_L_pointsource(
-                        scene_wcs, w_bcd, scene_shape, chan,
-                        ra_np, dec_np,
-                        is_full_array=is_full,
-                    )
-                    col_np_native = _project_scene_to_native(
-                        col_np.reshape(scene_shape), scene_wcs, w_bcd, native_shape,
-                    ).ravel()
+                    col_np_native = point_column(ra_np, dec_np)
                     Hloc[inp, inp] += np.dot(col_np_native, col_np_native * w_data)
                     rhsloc[inp] += np.dot(col_np_native, w_data * d)
                     lt_np = _apply_frame_adjoint_operator(
@@ -1433,19 +1602,11 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 ):
                     ie = sci_frame_to_idx[int(i)]
                     scale = float(f0_epoch[ie])
-                    d_ra_c, d_dec_c = _transient_prf_pos_derivatives(
-                        scene_wcs, w_bcd,
-                        config.TRANSIENT_RA, config.TRANSIENT_DEC, scene_shape,
-                        chan, is_full, eps_deg,
-                    )
-                    coldra = scale * d_ra_c
-                    coldec = scale * d_dec_c
-                    coldra_native = _project_scene_to_native(
-                        coldra.reshape(scene_shape), scene_wcs, w_bcd, native_shape,
-                    ).ravel()
-                    coldec_native = _project_scene_to_native(
-                        coldec.reshape(scene_shape), scene_wcs, w_bcd, native_shape,
-                    ).ravel()
+                    ra0, dec0 = position_ra, position_dec
+                    coldra_native = scale * (point_column(ra0 + eps_deg, dec0)
+                                              - point_column(ra0 - eps_deg, dec0)) / (2 * eps_deg)
+                    coldec_native = scale * (point_column(ra0, dec0 + eps_deg)
+                                              - point_column(ra0, dec0 - eps_deg)) / (2 * eps_deg)
                     ia, ibp = idx_off, idx_off + 1
                     Hloc[ia, ia] += np.dot(coldra_native, coldra_native * w_data)
                     Hloc[ibp, ibp] += np.dot(coldec_native, coldec_native * w_data)
@@ -1500,14 +1661,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                     if n_nps > 0 and col_nps_vec is not None:
                         inp = idx_nps
                         ra_np, dec_np = col_nps_vec
-                        col_np_off = column_L_pointsource(
-                            scene_wcs, w_bcd, scene_shape, chan,
-                            ra_np, dec_np,
-                            is_full_array=is_full,
-                        )
-                        col_np_off_native = _project_scene_to_native(
-                            col_np_off.reshape(scene_shape), scene_wcs, w_bcd, native_shape,
-                        ).ravel()
+                        col_np_off_native = point_column(ra_np, dec_np)
                         vnr = np.dot(coldra_native, col_np_off_native * w_data)
                         vnd = np.dot(coldec_native, col_np_off_native * w_data)
                         Hloc[ia, inp] += vnr
@@ -1527,8 +1681,10 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             if include_offset and idx_off is not None:
                 Hloc[idx_off, idx_off] += pos_ridge
                 Hloc[idx_off + 1, idx_off + 1] += pos_ridge
+                rhsloc[idx_off] -= pos_ridge * (position_ra - float(config.TRANSIENT_RA))
+                rhsloc[idx_off + 1] -= pos_ridge * (position_dec - float(config.TRANSIENT_DEC))
 
-            if bool(getattr(config, 'ENFORCE_GP_CENTRAL_MONOTONICITY', True)) and monotonic_terms:
+            if use_scene_gp_prior and bool(getattr(config, 'ENFORCE_GP_CENTRAL_MONOTONICITY', True)) and monotonic_terms:
                 d_scene = np.diag(Hloc[:n_scene, :n_scene])
                 d_scene = d_scene[np.isfinite(d_scene) & (d_scene > 0)]
                 if len(d_scene) > 0:
@@ -1578,6 +1734,10 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             if use_nonneg and n_sci_ep_l > 0:
                 lb[idx_trans_l:idx_trans_l + n_sci_ep_l] = 0.0
                 use_bounds = True
+            if n_stars > 0:
+                star_start = idx_trans_l + n_sci_ep_l + (2 if idx_off_l is not None else 0)
+                lb[star_start:star_start + n_stars] = 0.
+                use_bounds = True
             if n_host_nonneg > 0 and idx_host_start >= 0 and getattr(config, 'HOST_CORE_NONNEGATIVE', True):
                 for jh in range(int(n_host_nonneg)):
                     lb[idx_host_start + jh] = 0.0
@@ -1595,9 +1755,6 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                     xu = np.linalg.solve(Hm, rhsm)
                 except np.linalg.LinAlgError:
                     xu = lstsq(Hm, rhsm, check_finite=False, lapack_driver='gelsy')[0]
-                # Large systems can stall in constrained optimizers; use projected unconstrained solve.
-                if n_p > 2000:
-                    return np.clip(xu, lb, ub)
                 return _solve_map_bounds(Hm, rhsm, lb, ub, x0=xu)
             try:
                 return np.linalg.solve(Hm, rhsm)
@@ -1619,10 +1776,24 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         if float_pos and n_sci_ep > 0:
             print("   [Solver] Step 3b: Matrix fill + solve (transient position linearization)...")
             sys.stdout.flush()
-            H, rhs, idx_trans, idx_off, idx_stars, idx_star_end, idx_bg, n_params = build_system(True, f_epoch)
-            sol = _solve_H(H, rhs, idx_trans, idx_off, n_sci_ep, idx_host_start, n_host, idx_nps_for_bounds)
-            results['transient_dra_deg'] = float(sol[idx_off])
-            results['transient_ddec_deg'] = float(sol[idx_off + 1])
+            for position_iteration in range(12):
+                H, rhs, idx_trans, idx_off, idx_stars, idx_star_end, idx_bg, n_params = build_system(True, f_epoch)
+                idx_host_start = idx_star_end if n_host > 0 else -1
+                idx_nps_for_bounds = (idx_star_end + n_host) if n_nps > 0 else -1
+                sol = _solve_H(H, rhs, idx_trans, idx_off, n_sci_ep, idx_host_start, n_host, idx_nps_for_bounds)
+                step_ra, step_dec = float(sol[idx_off]), float(sol[idx_off + 1])
+                step_arcsec = 3600 * np.hypot(step_ra * np.cos(np.deg2rad(position_dec)), step_dec)
+                damping = min(1., .5 / max(step_arcsec, 1e-30))
+                position_ra += damping * step_ra
+                position_dec += damping * step_dec
+                f_epoch = sol[idx_trans:idx_trans + n_sci_ep].copy()
+                if step_arcsec < 1e-3:
+                    break
+            else:
+                raise RuntimeError('Transient position did not converge within 12 linearizations')
+            results['position_iterations'] = position_iteration + 1
+            results['transient_dra_deg'] = position_ra - float(config.TRANSIENT_RA)
+            results['transient_ddec_deg'] = position_dec - float(config.TRANSIENT_DEC)
         else:
             idx_off = None
 
@@ -1721,8 +1892,19 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         results['epoch_backgrounds'] = ep_bg
 
         try:
-            cov = np.linalg.inv(H)
-            sig = np.sqrt(np.clip(np.diag(cov), 0.0, np.inf))
+            # Only nuisance/photometry covariance is exported. Avoid a full
+            # inverse of thousands of latent-scene parameters.
+            chosen = np.arange(n_scene_total, n_params)
+            scale_h = np.sqrt(np.maximum(np.diag(H), np.finfo(float).tiny))
+            h_scaled = H / scale_h[:, None] / scale_h[None, :]
+            unit = np.zeros((n_params, len(chosen)))
+            unit[chosen, np.arange(len(chosen))] = 1. / scale_h[chosen]
+            columns = cho_solve(cho_factor(h_scaled, lower=True), unit) / scale_h[:, None]
+            cov = columns[chosen, :]
+            sig = np.full(n_params, np.nan)
+            sig[chosen] = np.sqrt(np.diag(cov))
+            results['uncertainty_kind'] = 'local_unconstrained_curvature_marginalized_over_scene'
+            results['transient_at_lower_bound'] = np.asarray(results['transient_epoch_fluxes']) <= 1e-12
             if n_sci_ep > 0:
                 e_err = sig[idx_trans:idx_trans + n_sci_ep].copy()
                 for i in science_frame_indices:
@@ -1743,7 +1925,8 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 se_h = np.asarray(sig[idx_star_end : idx_star_end + n_host], dtype=np.float64)
                 if n_host > 1:
                     results['host_core_errs'] = se_h.copy()
-                    results['host_core_err'] = float(np.sqrt(np.sum(np.square(se_h))))
+                    start_h = idx_star_end - n_scene_total
+                    results['host_core_err'] = float(np.sqrt(np.sum(cov[start_h:start_h+n_host, start_h:start_h+n_host])))
                 else:
                     results['host_core_err'] = float(se_h[0])
             if n_nps > 0:
@@ -1757,7 +1940,8 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 i0 = frame_hits[0]
                 i_f = idx_trans + sci_frame_to_idx[int(i0)]
                 i_b = idx_bg + int(i0)
-                sub = cov[np.ix_([i_f, i_b], [i_f, i_b])]
+                indices = np.array([i_f, i_b]) - n_scene_total
+                sub = cov[np.ix_(indices, indices)]
                 cov_bg[int(eid)] = {
                     'var_transient': float(sub[0, 0]),
                     'var_background': float(sub[1, 1]),
@@ -1765,7 +1949,9 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                 }
             results['transient_bg_cov_by_epoch_id'] = cov_bg
         except np.linalg.LinAlgError:
-            _log.warning("Could not invert Hessian H for parameter uncertainties; errs left at zero.")
+            for key in ('transient_errs', 'transient_epoch_errs', 'star_errs'):
+                results[key] = np.full_like(results[key], np.nan, dtype=float)
+            _log.warning("Could not invert Hessian H; uncertainties are unavailable (NaN).")
 
         if float_pos and idx_off is not None:
             dar = results['transient_dra_deg']
@@ -1778,13 +1964,28 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             )
         
     except Exception as e:
-        print(f"CRITICAL SOLVER ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+        raise RuntimeError("Joint photometry fit failed; no valid result was produced") from e
     
     return results
 
 
+def _with_fitted_config(function):
+    """Keep predictions stable after a campaign restores its global config."""
+    @wraps(function)
+    def wrapped(results, *args, **kwargs):
+        fitted = results.get('model_config', {})
+        saved = {name: getattr(config, name) for name in fitted}
+        try:
+            for name, value in fitted.items():
+                setattr(config, name, value)
+            return function(results, *args, **kwargs)
+        finally:
+            for name, value in saved.items():
+                setattr(config, name, value)
+    return wrapped
+
+
+@_with_fitted_config
 def predict_cutout_model(
     results,
     cutouts,
@@ -1823,7 +2024,7 @@ def predict_cutout_model(
     tra_ra = float(config.TRANSIENT_RA) + float(results.get('transient_dra_deg', 0.0))
     tra_dec = float(config.TRANSIENT_DEC) + float(results.get('transient_ddec_deg', 0.0))
 
-    chan = 'ch2' if 'ch2' in entry['filename'] else 'ch1'
+    chan = frame_channel(entry)
     w_native = entry['raw_wcs']
     is_full = entry.get('is_full_array', False)
     h, w = scene_shape
@@ -1849,18 +2050,16 @@ def predict_cutout_model(
                     ft = 0.0
                 else:
                     ft = float(np.asarray(te, dtype=np.float64)[ep_idx])
-        tx, ty = scene_wcs.world_to_pixel_values(tra_ra, tra_dec)
-        _add_delta_to_image(intrinsic, float(tx), float(ty), ft)
-        has_intrinsic = has_intrinsic or (abs(ft) > 0.0)
+        pred += ft * native_point_source_column(scene_wcs, w_native, scene_shape,
+                    native_shape, chan, tra_ra, tra_dec, is_full_array=is_full)
 
     if include_stars and len(stars) > 0:
         sf = np.asarray(star_fluxes, dtype=np.float64).ravel()
         for j, s_obj in enumerate(stars):
             if j >= len(sf) or sf[j] <= 0.0:
                 continue
-            sx, sy = scene_wcs.world_to_pixel_values(s_obj.ra.deg, s_obj.dec.deg)
-            _add_delta_to_image(intrinsic, float(sx), float(sy), sf[j])
-            has_intrinsic = True
+            pred += sf[j] * native_point_source_column(scene_wcs, w_native, scene_shape,
+                        native_shape, chan, s_obj.ra.deg, s_obj.dec.deg, is_full_array=is_full)
 
     if include_host:
         ra_h = dec_h = None
@@ -1911,9 +2110,8 @@ def predict_cutout_model(
             dec_np = getattr(config, 'HOST_CORE_DEC', None)
         if ra_np is not None and dec_np is not None:
             fnp = float(results.get('nuclear_point_flux', 0.0))
-            nx, ny = scene_wcs.world_to_pixel_values(float(ra_np), float(dec_np))
-            _add_delta_to_image(intrinsic, float(nx), float(ny), fnp)
-            has_intrinsic = has_intrinsic or (abs(fnp) > 0.0)
+            pred += fnp * native_point_source_column(scene_wcs, w_native, scene_shape,
+                        native_shape, chan, float(ra_np), float(dec_np), is_full_array=is_full)
 
     if has_intrinsic:
         conv = _apply_frame_forward_operator(

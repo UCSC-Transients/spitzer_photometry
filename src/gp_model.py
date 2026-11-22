@@ -2,6 +2,7 @@
 import warnings
 import numpy as np
 from scipy.optimize import minimize
+from scipy.linalg import cho_factor, cho_solve
 import scipy.sparse as sps
 from scipy.spatial.distance import pdist, squareform
 from . import config
@@ -90,8 +91,9 @@ def build_scene_prior_inverse(n_scene, ell, var, scene_shape, ell2=None, var2=No
     Q = scene_kernel_matrix(coords, ell_s, var)
     if use_two_scale:
         Q += scene_kernel_matrix(coords, float(ell2) * float(config.SUPERSAMPLE_FACTOR), float(var2))
-    Q += np.eye(n_scene) * 1e-6
-    return np.linalg.inv(Q)
+    jitter = max(float(var) + (float(var2) if use_two_scale else 0.), np.finfo(float).tiny) * 1e-8
+    Q.flat[::n_scene + 1] += jitter
+    return cho_solve(cho_factor(Q, lower=True), np.eye(n_scene))
 
 def optimize_hyperparameters(template_data_list):
     print("Optimizing GP Hyperparameters...")
@@ -108,8 +110,8 @@ def optimize_hyperparameters(template_data_list):
     cy, cx = h//2, w//2
     sz = 10
     
-    sub_data = data[cy-sz:cy+sz, cx-sz:cx+sz]
-    sub_sigma = sigma[cy-sz:cy+sz, cx-sz:cx+sz]
+    sub_data = data[max(0, cy-sz):min(h, cy+sz), max(0, cx-sz):min(w, cx+sz)]
+    sub_sigma = sigma[max(0, cy-sz):min(h, cy+sz), max(0, cx-sz):min(w, cx+sz)]
     
     # Skip if empty/masked
     if np.all(sub_data == 0) or np.all(np.isinf(sub_sigma)):
@@ -122,10 +124,14 @@ def optimize_hyperparameters(template_data_list):
     flat_sigma = sub_sigma.ravel()
     
     # Mask infinite sigmas
-    valid = np.isfinite(flat_sigma)
+    valid = np.isfinite(flat_sigma) & (flat_sigma > 0) & np.isfinite(flat_data)
     coords = coords[valid]
     flat_data = flat_data[valid]
     flat_sigma = flat_sigma[valid]
+    if flat_data.size < 4:
+        return config.INIT_LENGTH_SCALE, config.INIT_VARIANCE
+    flat_data = flat_data - np.median(flat_data)
+    initial_variance = max(float(np.var(flat_data)), float(np.median(flat_sigma**2)), 1e-30)
 
     def neg_log_likelihood(params):
         ln_ell, ln_var = params
@@ -143,8 +149,12 @@ def optimize_hyperparameters(template_data_list):
         except:
             return np.inf
 
-    init_params = [np.log(config.INIT_LENGTH_SCALE), np.log(config.INIT_VARIANCE)]
-    res = minimize(neg_log_likelihood, init_params, method='L-BFGS-B', bounds=[(-2, 3), (-5, 5)])
+    init_params = [np.log(config.INIT_LENGTH_SCALE), np.log(initial_variance)]
+    res = minimize(neg_log_likelihood, init_params, method='L-BFGS-B',
+                   bounds=[(-2, 3), (np.log(initial_variance) - 9, np.log(initial_variance) + 9)])
+    if not res.success or not np.isfinite(res.fun):
+        warnings.warn(f'GP initialization optimizer failed: {res.message}; using robust initialization')
+        return config.INIT_LENGTH_SCALE, initial_variance
     
     best_ell = np.exp(res.x[0])
     best_var = np.exp(res.x[1])

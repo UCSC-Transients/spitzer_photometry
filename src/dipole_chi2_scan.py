@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.ndimage import shift as ndi_shift
+from scipy.ndimage import map_coordinates
 from reproject import reproject_interp
 
 from . import config, solver
@@ -16,35 +16,28 @@ def _template_indices(cutouts):
 
 
 def _bcd_valid_mask(c, stretch_mask):
-    d = np.asarray(c['data'])
-    sig = np.asarray(c['sigma'])
-    m = (d != 0) & np.isfinite(sig) & (sig < 1e20)
-    if stretch_mask is not None and stretch_mask.shape == d.shape:
-        m &= stretch_mask
-    return m
+    return solver.valid_fit_mask(c)
 
 
-def _template_intersection_mask(cutouts, tpl_indices, stretch_mask, scene_shape):
-    vm = np.ones(scene_shape, dtype=bool)
-    if stretch_mask is not None and stretch_mask.shape == scene_shape:
-        vm &= stretch_mask
-    for i in tpl_indices:
-        m_i = _bcd_valid_mask(cutouts[i], stretch_mask)
-        # Native BCD masks and scene-grid masks can have different shapes.
-        # Keep intersection only when they are already in the same grid.
-        if m_i.shape == vm.shape:
-            vm &= m_i
-    return vm
+def _template_intersection_mask(cutouts, tpl_indices, stretch_mask, scene_shape, scene_wcs):
+    from .diagnostics import diagnostic_stretch_mask
+    return diagnostic_stretch_mask([cutouts[i] for i in tpl_indices], scene_shape, scene_wcs)
 
 
 def _to_stack_grid(arr, arr_wcs, stack_wcs, stack_shape):
-    if stack_wcs is None or stack_shape is None:
-        return np.asarray(arr, dtype=float)
-    try:
-        out, _ = reproject_interp((np.asarray(arr, dtype=float), arr_wcs), stack_wcs, shape_out=stack_shape)
-        return np.nan_to_num(out, nan=np.nan)
-    except Exception:
-        return np.asarray(arr, dtype=float)
+    return reproject_interp((np.asarray(arr, dtype=float), arr_wcs), stack_wcs,
+                            shape_out=stack_shape)[0]
+
+
+def shift_model_in_scene_pixels(img, native_wcs, scene_wcs, dx, dy):
+    """Shift a native model by a displacement defined on the sky scene grid."""
+    yy, xx = np.indices(np.shape(img), dtype=float)
+    ra, dec = native_wcs.pixel_to_world_values(xx, yy)
+    sx, sy = scene_wcs.world_to_pixel_values(ra, dec)
+    ra, dec = scene_wcs.pixel_to_world_values(sx - dx, sy - dy)
+    nx, ny = native_wcs.world_to_pixel_values(ra, dec)
+    return map_coordinates(np.asarray(img, dtype=float), [ny, nx],
+                           order=1, mode='nearest', prefilter=False)
 
 
 def compute_dipole_chi2_scan(
@@ -76,7 +69,7 @@ def compute_dipole_chi2_scan(
         return out
 
     scene_shape = results['scene_shape']
-    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape)
+    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape, results['scene_wcs'])
     stack_wcs = results.get('scene_wcs')
     stack_shape = tuple(scene_shape)
 
@@ -110,26 +103,16 @@ def compute_dipole_chi2_scan(
 
     # Pre-cache data/sigma/mask for each template frame.
     tpl_data = [np.asarray(cutouts[i]['data'], dtype=float) for i in tpl]
-    tpl_sig = [np.asarray(cutouts[i]['sigma'], dtype=float) for i in tpl]
+    tpl_sig = [np.asarray(results['effective_sigmas'][i] if 'effective_sigmas' in results else cutouts[i]['sigma'], dtype=float) for i in tpl]
     tpl_mask = [_bcd_valid_mask(cutouts[i], stretch_mask) for i in tpl]
-
-    def _shift_model(img: np.ndarray, s_pix: float) -> np.ndarray:
-        # scipy shift order: (y, x). Positive x shift is +ux, positive y is +uy.
-        return ndi_shift(
-            np.asarray(img, dtype=float),
-            shift=(float(s_pix * uy), float(s_pix * ux)),
-            order=1,
-            mode='nearest',
-            prefilter=False,
-        )
 
     def chi2_at_shift(s_pix: float) -> float:
         tot = 0.0
-        for data_i, sig_i, m_i, model_i in zip(tpl_data, tpl_sig, tpl_mask, model_cube):
-            pred = _shift_model(model_i, s_pix)
+        for index, (data_i, sig_i, m_i, model_i) in enumerate(zip(tpl_data, tpl_sig, tpl_mask, model_cube)):
+            pred = shift_model_in_scene_pixels(model_i, cutouts[tpl[index]]['wcs'],
+                                               stack_wcs, s_pix * ux, s_pix * uy)
             r = data_i - pred
-            m = m_i
-            tot += float(np.sum((r[m] ** 2) / np.clip(sig_i[m] ** 2, 1e-30, None)))
+            tot += float(np.sum((r[m_i] / sig_i[m_i]) ** 2))
         return tot
 
     coarse_s = np.arange(-float(coarse_max), float(coarse_max) + 1e-9, float(coarse_step), dtype=float)
@@ -285,25 +268,16 @@ def plot_shifted_residual_gallery(
         )
         model_cube.append(np.asarray(pred, dtype=float))
     tpl_data = [np.asarray(cutouts[i]['data'], dtype=float) for i in tpl]
-    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, results['scene_shape'])
+    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, results['scene_shape'], results['scene_wcs'])
     stack_wcs = results.get('scene_wcs')
     stack_shape = tuple(results['scene_shape'])
-
-    def _shift_model(img: np.ndarray, s_pix: float) -> np.ndarray:
-        return ndi_shift(
-            np.asarray(img, dtype=float),
-            shift=(float(s_pix * uy), float(s_pix * ux)),
-            order=1,
-            mode='nearest',
-            prefilter=False,
-        )
 
     resid_maps = []
     for s in shifts:
         cube = []
         for i, (d, m) in enumerate(zip(tpl_data, model_cube)):
             cube.append(
-                _to_stack_grid(d - _shift_model(m, float(s)), cutouts[tpl[i]]['wcs'], stack_wcs, stack_shape)
+                _to_stack_grid(d - shift_model_in_scene_pixels(m, cutouts[tpl[i]]['wcs'], stack_wcs, float(s) * ux, float(s) * uy), cutouts[tpl[i]]['wcs'], stack_wcs, stack_shape)
             )
         resid_maps.append(np.nanmedian(np.stack(cube, axis=0), axis=0))
     if resid_maps:

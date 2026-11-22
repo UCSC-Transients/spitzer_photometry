@@ -16,25 +16,31 @@ from scipy.optimize import minimize
 from reproject import reproject_interp
 from . import config
 from .native_forward import extract_native_stamp_for_target
+from .instrument import channel_from_filename
 
 # --- HELPER FUNCTIONS ---
 
 def parse_mjd_robust(header):
+    """Return the first finite observation MJD, falling back to date strings."""
     for key in ['MJD-OBS', 'MJD_OBS', 'MJD']:
-        if key in header: return float(header[key])
+        try:
+            value = float(header[key])
+            if np.isfinite(value):
+                return value
+        except (KeyError, TypeError, ValueError):
+            continue
     for key in ['DATE-OBS', 'DATE_OBS', 'DATE']:
-        if key in header:
-            try: return Time(header[key]).mjd
-            except: continue
+        try:
+            value = float(Time(header[key]).mjd)
+            if np.isfinite(value):
+                return value
+        except (KeyError, TypeError, ValueError):
+            continue
     return None
 
+
 def is_correct_channel(filename, config_channel):
-    fname = os.path.basename(filename).lower()
-    chan = config_channel.lower()
-    if chan in fname: return True
-    if chan == 'ch1' and ('i1' in fname or 'I1' in filename): return True
-    if chan == 'ch2' and ('i2' in fname or 'I2' in filename): return True
-    return False
+    return channel_from_filename(filename) == config_channel.lower()
 
 def get_valid_mask(data, border=5):
     valid = (data != 0) & np.isfinite(data)
@@ -180,8 +186,9 @@ def load_data(file_pair):
             
     with fits.open(unc_path) as hdul:
         unc_data = hdul[0].data
-    data = np.nan_to_num(data, nan=0.0)
-    unc_data = np.nan_to_num(unc_data, nan=np.inf)
+    invalid = ~np.isfinite(data) | ~np.isfinite(unc_data) | (unc_data <= 0)
+    data = np.where(np.isfinite(data), data, 0.0)
+    unc_data = np.where(invalid, np.inf, unc_data)
     
     return {
         'data': data,
@@ -266,12 +273,12 @@ def update_catalog_with_template(deep_template, wcs, template_name='deep_templat
 
 def find_spitzer_files(root_dir):
     file_list = []
-    cbcd_files = glob.glob(os.path.join(root_dir, '**', '*cbcd.fits'), recursive=True)
+    cbcd_files = sorted(glob.glob(os.path.join(root_dir, '**', '*cbcd.fits'), recursive=True))
     for img_path in cbcd_files:
         if not is_correct_channel(img_path, config.CHANNEL):
             continue
         unc_path = img_path.replace('cbcd.fits', 'cbunc.fits')
-        file_list.append({'image': img_path, 'unc': unc_path, 'filename': os.path.basename(img_path)})
+        file_list.append({'image': img_path, 'unc': unc_path, 'filename': os.path.basename(img_path), 'channel': config.CHANNEL.lower()})
     n_all = len(cbcd_files)
     n_keep = len(file_list)
     if n_all > 0 and n_keep < n_all:
@@ -297,7 +304,8 @@ def filter_off_chip_frames(file_list, target_ra, target_dec):
             x, y = float(x), float(y)
             if (x > buffer) and (x < naxis1 - buffer) and (y > buffer) and (y < naxis2 - buffer):
                 valid_files.append(f)
-        except: continue
+        except (OSError, ValueError) as exc:
+            warnings.warn(f"Cannot evaluate footprint for {f['image']}: {exc}")
     print(f"   On-Chip Filter: {len(valid_files)}/{len(file_list)} kept.")
     return valid_files
 
@@ -310,11 +318,43 @@ def categorize_observations(file_pairs, split_date_mjd):
             if obs_mjd is not None:
                 pair['mjd'] = obs_mjd
                 valid_dated_pairs.append(pair)
-        except: pass
+        except (OSError, ValueError) as exc:
+            warnings.warn(f"Cannot date {pair['image']}: {exc}")
+    valid_dated_pairs.sort(key=lambda p: (p['mjd'], p['image']))
     on_target_pairs = filter_off_chip_frames(valid_dated_pairs, config.TRANSIENT_RA, config.TRANSIENT_DEC)
     science = [p for p in on_target_pairs if p['mjd'] <= split_date_mjd]
     template = [p for p in on_target_pairs if p['mjd'] > split_date_mjd]
     return science, template
+
+
+def assign_flux_epochs(observations: list[dict], max_span_days: float = 1.0) -> int:
+    """Assign shared-flux groups whose complete MJD span is at most one day.
+
+    Mutates epoch_id and epoch_gap_warning on entries. Science and templates
+    never share a group. A would-be span between one and two days starts a new
+    group and is flagged for review. Sorting is deterministic by MJD/filename.
+    """
+    if not np.isfinite(max_span_days) or max_span_days <= 0:
+        raise ValueError('max_span_days must be positive and finite')
+    epoch = -1
+    start = None
+    template = None
+    for entry in sorted(observations, key=lambda c: (float(c['mjd']), str(c.get('filename', '')))):
+        mjd = float(entry['mjd'])
+        if not np.isfinite(mjd):
+            raise ValueError('Observation MJD must be finite')
+        is_template = bool(entry.get('is_template'))
+        span = 0.0 if start is None else mjd - start
+        flag = start is not None and is_template == template and max_span_days < span < 2.0
+        entry['epoch_gap_warning'] = bool(flag)
+        if start is None or is_template != template or span > max_span_days:
+            epoch += 1
+            start, template = mjd, is_template
+        entry['epoch_id'] = epoch
+        if flag:
+            warnings.warn(f"Observation {entry.get('filename', '')} exceeds the one-day flux group "
+                          f"({span:.6g} days, under two days); starting a new group.", UserWarning)
+    return epoch + 1
 
 def define_mosaic_wcs(file_list, target_coord):
     print("Defining Global Mosaic WCS...")
@@ -369,7 +409,8 @@ def align_frames_to_template(file_list, deep_template, template_wcs, source_cata
         return
     if len(ref_world[0]) < 3: return
     ref_world_arr = np.column_stack((ref_world[0], ref_world[1]))
-    ref_tree = cKDTree(ref_world_arr)
+    ref_coords = SkyCoord(ref_world_arr[:, 0], ref_world_arr[:, 1], unit='deg')
+    ref_tree = cKDTree(ref_coords.cartesian.xyz.value.T)
     aligned_count = 0
     match_radius_deg = float(getattr(config, 'ALIGN_MATCH_RADIUS_DEG', 1.0e-4))
     min_matches = int(max(3, getattr(config, 'ALIGN_MIN_MATCHES', 8)))
@@ -384,9 +425,19 @@ def align_frames_to_template(file_list, deep_template, template_wcs, source_cata
             with fits.open(f['image']) as hdul: wcs_orig = WCS(hdul[0].header)
         except: continue
         ra, dec = wcs_orig.pixel_to_world_values(xs, ys)
-        bcd_world = np.column_stack((ra, dec))
-        dists, indices = ref_tree.query(bcd_world, distance_upper_bound=match_radius_deg)
-        valid = dists != float('inf')
+        bcd_coords = SkyCoord(ra, dec, unit='deg')
+        bcd_world = bcd_coords.cartesian.xyz.value.T
+        chord_limit = 2 * np.sin(np.deg2rad(match_radius_deg) / 2)
+        dists, indices = ref_tree.query(bcd_world, distance_upper_bound=chord_limit)
+        valid = np.isfinite(dists)
+        # A reference star must not count more than once in the offset estimate.
+        seen = set()
+        for j in np.argsort(dists):
+            if valid[j]:
+                if int(indices[j]) in seen:
+                    valid[j] = False
+                else:
+                    seen.add(int(indices[j]))
         if np.sum(valid) < min_matches:
             continue
         matched_ref_world = ref_world_arr[indices[valid]]
@@ -448,68 +499,21 @@ def flag_cosmic_rays(processed_list, deep_template, scene_wcs, target_coord):
     print(f"   Masked {count} CR pixels.")
     return count
 
-def extract_analysis_cutouts(file_list, target_coord):
+def _extract_pristine_native_analysis_stamps(file_list, target_coord, *, banner: str):
     """
-    Reproject each BCD onto a shared North-up analysis stamp (w_small, pc=I).
-    Stacking (e.g. median of template cutouts) uses these same grids; there is
-    no separate native-orientation analysis cutout in this path yet.
+    Cutout-only: ``ANALYSIS_BOX_SIZE × SUPERSAMPLE_FACTOR`` pixels on the detector grid — no rotate,
+    resample, or reproject of BCD science values (only MJy/sr→Jy per pixel unit conversion upstream).
     """
-    print("Extracting Analysis Cutouts...")
-    n_pix = int(config.ANALYSIS_BOX_SIZE * config.SUPERSAMPLE_FACTOR)
-    scale = config.PIXEL_SCALE / config.SUPERSAMPLE_FACTOR / 3600.0
-    w_small = WCS(naxis=2)
-    w_small.wcs.crpix = [n_pix/2, n_pix/2]
-    w_small.wcs.crval = [target_coord.ra.deg, target_coord.dec.deg]
-    w_small.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    w_small.wcs.cdelt = [-scale, scale]
-    w_small.wcs.pc = np.eye(2)
-    cutouts = []
-    for f in file_list:
-        raw = load_data(f)
-        d_jy = raw['data'] * config.MJY_SR_TO_JY; s_jy = raw['sigma'] * config.MJY_SR_TO_JY
-        
-        # Use aligned WCS if available, else raw
-        wcs_use = f.get('corrected_wcs', raw['wcs'])
-        
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            d_cut, _ = reproject_interp((d_jy, wcs_use), w_small, shape_out=(n_pix, n_pix))
-            s_cut, _ = reproject_interp((s_jy, wcs_use), w_small, shape_out=(n_pix, n_pix))
-        
-        d_cut = np.nan_to_num(d_cut)
-        s_cut = np.nan_to_num(s_cut, nan=np.inf)
-        s_cut[(d_cut==0) & (s_cut==0)] = np.inf
-        
-        # Save raw_wcs and READOUT MODE for Solver
-        cutouts.append({
-            'data': d_cut,
-            'sigma': s_cut,
-            'wcs': w_small,
-            'raw_wcs': wcs_use,
-            'is_full_array': raw.get('is_full_array', False), # <--- PASSED TO SOLVER
-            'mjd': raw['mjd'],
-            'filename': raw['filename'],
-            'epoch_id': f.get('epoch_id', 0),
-            'is_template': f.get('is_template', False)
-        })
-    return cutouts, w_small
-
-
-def extract_native_analysis_cutouts(file_list, target_coord):
-    """
-    Extract centered native-detector cutouts for each BCD without resampling data values.
-
-    The cutout WCS can vary per frame (as expected for native detector geometry).
-    """
-    print("Extracting Native Analysis Cutouts (no data reprojection)...")
-    n_pix = int(config.ANALYSIS_BOX_SIZE * config.SUPERSAMPLE_FACTOR)
+    sr = max(1, int(config.SUPERSAMPLE_FACTOR))
+    n_pix = int(config.ANALYSIS_BOX_SIZE) * sr
     size_xy = (n_pix, n_pix)
+    print(banner)
     cutouts = []
     for f in file_list:
         raw = load_data(f)
-        d_jy = raw['data'] * config.MJY_SR_TO_JY
-        s_jy = raw['sigma'] * config.MJY_SR_TO_JY
-        wcs_use = f.get('corrected_wcs', raw['wcs'])
+        d_jy = raw["data"] * config.MJY_SR_TO_JY
+        s_jy = raw["sigma"] * config.MJY_SR_TO_JY
+        wcs_use = f.get("corrected_wcs", raw["wcs"])
         d_cut, s_cut, w_cut = extract_native_stamp_for_target(
             d_jy,
             s_jy,
@@ -520,18 +524,45 @@ def extract_native_analysis_cutouts(file_list, target_coord):
             fill_sigma=np.inf,
         )
         d_cut = np.nan_to_num(d_cut)
-        s_cut = np.nan_to_num(s_cut, nan=np.inf)
+        w_cut._detector_wcs = wcs_use.deepcopy()
+        s_cut = np.where(np.isfinite(s_cut) & (s_cut > 0), s_cut, np.inf)
         s_cut[(d_cut == 0) & (s_cut == 0)] = np.inf
-        cutouts.append({
-            'data': d_cut,
-            'sigma': s_cut,
-            'wcs': w_cut,
-            'raw_wcs': w_cut,
-            'is_full_array': raw.get('is_full_array', False),
-            'mjd': raw['mjd'],
-            'filename': raw['filename'],
-            'epoch_id': f.get('epoch_id', 0),
-            'is_template': f.get('is_template', False),
-        })
-    cutout_wcs = cutouts[0]['wcs'] if cutouts else None
+        cutouts.append(
+            {
+                "data": d_cut,
+                "sigma": s_cut,
+                "wcs": w_cut,
+                "raw_wcs": w_cut,
+                "stamp_frame": "native",
+                "is_full_array": raw.get("is_full_array", False),
+                "mjd": raw["mjd"],
+                "filename": raw["filename"],
+                "channel": f.get("channel", config.CHANNEL.lower()),
+                "epoch_id": f.get("epoch_id", 0),
+                "is_template": f.get("is_template", False),
+                "epoch_gap_warning": f.get("epoch_gap_warning", False),
+            },
+        )
+    cutout_wcs = cutouts[0]["wcs"] if cutouts else None
     return cutouts, cutout_wcs
+
+
+def extract_analysis_cutouts(file_list, target_coord):
+    """Pristine detector stamps (**no** interpolation/rotation/scaling); same as native-path extraction."""
+    return _extract_pristine_native_analysis_stamps(
+        file_list,
+        target_coord,
+        banner=(
+            "Extracting analysis cutouts (pristine IRAC stamps; ANALYSIS_BOX_SIZE×SUPERSAMPLE_FACTOR; "
+            "no reprojection)…"
+        ),
+    )
+
+
+def extract_native_analysis_cutouts(file_list, target_coord):
+    """Alias of :func:`extract_analysis_cutouts` — single geometry for scene-compatible fitting."""
+    return _extract_pristine_native_analysis_stamps(
+        file_list,
+        target_coord,
+        banner="Extracting Native Analysis Cutouts (pristine detector; no reprojection)…",
+    )

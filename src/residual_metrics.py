@@ -4,8 +4,9 @@ import numpy as np
 
 def _acf2d_centered(arr, valid_mask):
     """Normalized 2D autocorrelation; peak at center = 1."""
-    a = np.where(valid_mask, arr.astype(float), 0.0)
-    a -= np.nanmean(a[valid_mask]) if np.any(valid_mask) else 0.0
+    valid_mask = np.asarray(valid_mask, dtype=bool) & np.isfinite(arr)
+    mean = np.mean(np.asarray(arr)[valid_mask]) if np.any(valid_mask) else 0.0
+    a = np.where(valid_mask, np.asarray(arr, dtype=float) - mean, 0.0)
     h, w = a.shape
     pad_h, pad_w = h, w
     ap = np.zeros((2 * pad_h, 2 * pad_w), dtype=float)
@@ -13,6 +14,11 @@ def _acf2d_centered(arr, valid_mask):
     fa = np.fft.rfft2(ap)
     p = np.fft.irfft2(fa * np.conj(fa), s=ap.shape)
     p = np.fft.fftshift(p)
+    mp = np.zeros_like(ap)
+    mp[:h, :w] = valid_mask
+    fm = np.fft.rfft2(mp)
+    pairs = np.fft.fftshift(np.fft.irfft2(fm * np.conj(fm), s=ap.shape))
+    p = np.divide(p, pairs, out=np.zeros_like(p), where=pairs > .5)
     cy, cx = p.shape[0] // 2, p.shape[1] // 2
     peak = p[cy, cx]
     if peak <= 0 or not np.isfinite(peak):
@@ -43,10 +49,10 @@ def acf_e90_scale_pix(acf):
         return float('nan')
     prof = np.asarray(prof)
     rb = np.asarray(rb)
-    above = prof > 0.5
-    if not np.any(above):
+    below = prof <= 0.5
+    if not np.any(below):
         return float(rb[-1])
-    i0 = int(np.argmax(above))
+    i0 = int(np.argmax(below))
     if i0 == 0:
         return float(rb[0])
     t = (0.5 - prof[i0 - 1]) / (prof[i0] - prof[i0 - 1] + 1e-30)
@@ -55,7 +61,7 @@ def acf_e90_scale_pix(acf):
 
 
 def dipole_moment_xy(resid, valid_mask):
-    """Flux-weighted centroid offset from image center (dipole proxy)."""
+    """Signed residual first moment normalized by absolute residual flux."""
     r = np.asarray(resid, dtype=float)
     h, w = r.shape
     cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
@@ -67,8 +73,8 @@ def dipole_moment_xy(resid, valid_mask):
     s = np.sum(wt)
     if s <= 0:
         return 0.0, 0.0, 0.0
-    mx = np.sum((xx[m] - cx) * wt) / s
-    my = np.sum((yy[m] - cy) * wt) / s
+    mx = np.sum((xx[m] - cx) * r[m]) / s
+    my = np.sum((yy[m] - cy) * r[m]) / s
     return float(mx), float(my), float(np.hypot(mx, my))
 
 

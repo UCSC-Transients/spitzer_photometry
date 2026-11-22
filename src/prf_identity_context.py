@@ -35,6 +35,7 @@ def identity_prf_operators_context():
         "_get_prf_exact_operator_matrix",
         "_apply_prf_operator_native",
         "_apply_prf_adjoint_native",
+        "native_point_source_column",
     )
     orig: dict[str, Callable] = {n: getattr(solver, n) for n in names}
 
@@ -65,6 +66,12 @@ def identity_prf_operators_context():
     def id_native_adj(y_native, native_wcs, native_shape, channel, is_full_array=False):  # noqa: ARG001
         return np.asarray(y_native, dtype=np.float64).reshape(native_shape)
 
+    def id_point(scene_wcs, native_wcs, scene_shape, native_shape, channel, ra, dec, **kwargs):
+        intrinsic = np.zeros(scene_shape)
+        x, y = scene_wcs.world_to_pixel_values(ra, dec)
+        solver._add_delta_to_image(intrinsic, float(x), float(y), 1.)
+        return solver._project_scene_to_native(intrinsic, scene_wcs, native_wcs, native_shape).ravel()
+
     try:
         solver.apply_spatially_varying_prf_to_scene = id_scene_fwd
         solver.apply_spatially_varying_prf_adjoint = id_scene_adj
@@ -74,6 +81,7 @@ def identity_prf_operators_context():
         solver._get_prf_exact_operator_matrix = id_exact_matrix
         solver._apply_prf_operator_native = id_native_fwd
         solver._apply_prf_adjoint_native = id_native_adj
+        solver.native_point_source_column = id_point
         yield
     finally:
         for n in names:

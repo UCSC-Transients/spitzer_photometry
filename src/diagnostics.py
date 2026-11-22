@@ -11,6 +11,7 @@ from reproject import reproject_interp
 from . import config
 from . import solver
 from . import residual_metrics
+from .instrument import frame_channel
 
 
 def get_robust_limits(data, pmin=1, pmax=99, mask=None):
@@ -155,17 +156,26 @@ def _sigma_display_limits(z, valid_mask, cap=None):
     return float(np.clip(max(lim, 0.5), 0.5, cap))
 
 
-def diagnostic_stretch_mask(cutouts, stamp_shape):
-    """Pixels used for robust vmin/vmax (exclude CR/sigma-masked and zero data)."""
-    h, w = int(stamp_shape[0]), int(stamp_shape[1])
-    m = np.ones((h, w), dtype=bool)
+def diagnostic_stretch_mask(cutouts, stamp_shape, stamp_wcs=None):
+    """Intersection of valid coverage on an explicitly identified display grid."""
+    shape = tuple(stamp_shape)
+    mask = np.ones(shape, dtype=bool)
+    if stamp_wcs is None:
+        # Shape equality alone never establishes alignment across BCDs.
+        return mask
     for c in cutouts:
-        d = np.asarray(c['data'])
-        sig = np.asarray(c['sigma'])
-        if d.shape != (h, w):
-            continue
-        m &= (d != 0) & np.isfinite(sig) & (sig < 1e20)
-    return m
+        projected, footprint = reproject_interp(
+            (solver.valid_fit_mask(c).astype(float), c['wcs']), stamp_wcs,
+            shape_out=shape, order='nearest-neighbor')
+        mask &= (footprint > 0) & (projected > .5)
+    return mask
+
+
+def _fit_sigma(results, cutouts, index):
+    saved = results.get('effective_sigmas')
+    if saved is not None:
+        return np.asarray(saved[index], dtype=float)
+    return solver.effective_native_sigma_for_fit(cutouts[index]['sigma'], cutouts[index])
 
 
 def _lightcurve_row_is_placeholder(flux, err, is_template):
@@ -218,7 +228,7 @@ def _transient_only_stamp(results, cutouts, frame_index):
         include_gp=False, include_stars=False, include_transient=True,
         include_host=False,
     )
-    bg = float(results['epoch_backgrounds'][int(c['epoch_id'])])
+    bg = float(results['bcd_backgrounds'][frame_index])
     return np.asarray(p, dtype=float) - bg
 
 
@@ -278,12 +288,8 @@ def plot_fit_template_with_stars(
     plt.close()
 
 def _bcd_valid_mask(c, stretch_mask):
-    d = np.asarray(c['data'])
-    sig = np.asarray(c['sigma'])
-    m = (d != 0) & np.isfinite(sig) & (sig < 1e20)
-    if stretch_mask is not None and stretch_mask.shape == d.shape:
-        m &= stretch_mask
-    return m
+    # A display-grid mask cannot be applied by array index to a native BCD.
+    return solver.valid_fit_mask(c)
 
 
 def plot_bcd_residuals(cutouts, results, stars, star_fluxes, deep_stack, stretch_mask=None):
@@ -311,7 +317,7 @@ def plot_bcd_residuals(cutouts, results, stars, star_fluxes, deep_stack, stretch
         for k in selection:
             c = cutouts[k]
             data = np.asarray(c['data'], dtype=float)
-            sig = np.asarray(c['sigma'], dtype=float)
+            sig = _fit_sigma(results, cutouts, k)
             vm = _bcd_valid_mask(c, stretch_mask)
 
             mod_full = solver.predict_cutout_model(
@@ -423,9 +429,9 @@ def plot_epoch_stacks(cutouts, results, target_coord, stars, star_fluxes, stretc
                     include_transient=True, include_stars=True,
                 )
                 res = np.asarray(c['data'], dtype=float) - pred
-                stack_resid.append(_to_stack_grid(res, c['wcs'], stack_wcs, stack_shape))
                 vm = _bcd_valid_mask(c, stretch_mask)
-                z = _sigma_residual_map(res, np.asarray(c['sigma'], dtype=float), vm)
+                stack_resid.append(_to_stack_grid(np.where(vm, res, np.nan), c['wcs'], stack_wcs, stack_shape))
+                z = _sigma_residual_map(res, _fit_sigma(results, cutouts, idx), vm)
                 stack_z.append(_to_stack_grid(z, c['wcs'], stack_wcs, stack_shape))
 
             if not stack_resid:
@@ -553,22 +559,17 @@ def _stack_grid(results, cutouts):
 
 
 def _to_stack_grid(arr, arr_wcs, stack_wcs, stack_shape):
-    """Reproject image to common stack grid (used only for stacked diagnostics)."""
+    """Reproject diagnostics, raising rather than silently mixing WCS grids."""
     if stack_wcs is None or stack_shape is None:
         return np.asarray(arr, dtype=float)
-    try:
-        out, _ = reproject_interp((np.asarray(arr, dtype=float), arr_wcs), stack_wcs, shape_out=stack_shape)
-        return np.nan_to_num(out, nan=np.nan)
-    except Exception:
-        return np.asarray(arr, dtype=float)
+    return reproject_interp((np.asarray(arr, dtype=float), arr_wcs), stack_wcs,
+                            shape_out=stack_shape)[0]
 
 
-def _template_intersection_mask(cutouts, tpl_indices, stretch_mask, scene_shape):
-    vm = np.ones(scene_shape, dtype=bool)
-    if stretch_mask is not None and stretch_mask.shape == scene_shape:
+def _template_intersection_mask(cutouts, tpl_indices, stretch_mask, scene_shape, scene_wcs):
+    vm = diagnostic_stretch_mask([cutouts[i] for i in tpl_indices], scene_shape, scene_wcs)
+    if stretch_mask is not None and stretch_mask.shape == tuple(scene_shape):
         vm &= stretch_mask
-    for i in tpl_indices:
-        vm &= _bcd_valid_mask(cutouts[i], stretch_mask)
     return vm
 
 
@@ -581,7 +582,7 @@ def plot_template_component_stacks(cutouts, results, stars, star_fluxes, stretch
         print("   [Diagnostics] No template cutouts; skip DIAGNOSTIC_TEMPLATE_COMPONENTS.pdf")
         return
     scene_shape = results['scene_shape']
-    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape)
+    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape, results['scene_wcs'])
     stack_wcs, stack_shape = _stack_grid(results, cutouts)
 
     def _med_stack(arrays):
@@ -756,7 +757,7 @@ def plot_template_prf_vs_residual_orientation(
     scene_wcs = results['scene_wcs']
     scene_shape = results['scene_shape']
     stack_wcs, stack_shape = _stack_grid(results, cutouts)
-    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape)
+    vm = _template_intersection_mask(cutouts, tpl, stretch_mask, scene_shape, results['scene_wcs'])
 
     ra_h = getattr(config, 'HOST_CORE_RA', None)
     dec_h = getattr(config, 'HOST_CORE_DEC', None)
@@ -770,7 +771,7 @@ def plot_template_prf_vs_residual_orientation(
     resid_cube = []
     for i in tpl:
         c = cutouts[i]
-        chan = 'ch2' if 'ch2' in str(c.get('filename', '')).lower() else 'ch1'
+        chan = frame_channel(c)
         w_native = c['raw_wcs']
         tx, ty = w_native.world_to_pixel_values(ra, dec)
         prf_m = solver.load_prf(chan, tx, ty)
@@ -980,7 +981,7 @@ def write_fit_quality_report(cutouts, results, stars, star_fluxes, median_stamp,
     and uncertainty summaries for QA.
     """
     os.makedirs(config.DIAGNOSTIC_DIR, exist_ok=True)
-    stretch_mask = diagnostic_stretch_mask(cutouts, median_stamp.shape)
+    stretch_mask = diagnostic_stretch_mask(cutouts, median_stamp.shape, results['scene_wcs'])
     model = np.asarray(results['model_scene'])
     gp_scene = np.asarray(results.get('gp_scene', model))
     bgs = results['epoch_backgrounds']
@@ -999,7 +1000,7 @@ def write_fit_quality_report(cutouts, results, stars, star_fluxes, median_stamp,
         for c in cutouts:
             if c.get('is_template'):
                 continue
-            ch = 'ch2' if 'ch2' in str(c.get('filename', '')).lower() else 'ch1'
+            ch = frame_channel(c)
             try:
                 prf_acf_e90 = residual_metrics.prf_autocorr_scale_on_grid(
                     scene_wcs,
@@ -1017,7 +1018,7 @@ def write_fit_quality_report(cutouts, results, stars, star_fluxes, median_stamp,
     per_frame = []
     for i, c in enumerate(cutouts):
         d = np.asarray(c['data'])
-        sig = np.asarray(c['sigma'])
+        sig = _fit_sigma(results, cutouts, i)
         pred = solver.predict_cutout_model(
             results, cutouts, stars, star_fluxes, i,
             include_transient=True, include_stars=True,
@@ -1038,7 +1039,7 @@ def write_fit_quality_report(cutouts, results, stars, star_fluxes, median_stamp,
         annulus = mask & (rpix >= inner_r) & (rpix <= outer_r)
         ann_rmse = float(np.sqrt(np.nanmean(resid[annulus] ** 2))) if np.any(annulus) else None
         med_sig_ann = float(np.nanmedian(sig[annulus])) if np.any(annulus) else None
-        pois_ann = float(np.sqrt(max(np.nanmedian(np.abs(d[annulus])), 0.0))) if np.any(annulus) else None
+        pois_ann = None  # Poisson noise cannot be inferred from sqrt(Jy).
         ref_noise = None
         if med_sig_ann is not None and np.isfinite(med_sig_ann) and med_sig_ann > 0:
             ref_noise = med_sig_ann
