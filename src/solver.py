@@ -1147,6 +1147,11 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         'transient_bg_cov_by_epoch_id': {},
         'star_fluxes': np.zeros(len(stars)),
         'star_errs': np.zeros(len(stars)),
+        'star_prior_fluxes': np.asarray(star_initial_fluxes, dtype=float).copy(),
+        'star_prior_equivalent_exposures': float(
+            getattr(config, 'CATALOG_PRIOR_EQUIVALENT_EXPOSURES', 5.0)
+        ),
+        'star_prior_precision': np.full(len(stars), np.nan),
         'epoch_backgrounds': np.zeros(n_epochs),
         'model_scene': np.zeros(scene_shape),
         'scene_wcs': None,
@@ -1358,6 +1363,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         solver_stars = list(stars)
         solver_init = list(star_initial_fluxes)
         n_stars = len(solver_stars)
+        star_prior_precision = np.full(n_stars, np.nan, dtype=float)
         n_bg = len(cutouts)  # sky term per BCD
         use_nonneg = bool(getattr(config, 'TRANSIENT_NONNEGATIVE', True)) and n_sci_ep > 0
         float_pos = bool(getattr(config, 'FLOAT_TRANSIENT_POSITION', False)) and n_sci_ep > 0
@@ -1672,7 +1678,11 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             if n_stars > 0:
                 star_diag = np.diag(Hloc[idx_stars:idx_star_end, idx_stars:idx_star_end])
                 avg_w = np.median(star_diag)
-                lam = max((avg_w / len(cutouts)) * 5.0, 1.0)
+                equivalent_exposures = float(max(
+                    0.0, getattr(config, 'CATALOG_PRIOR_EQUIVALENT_EXPOSURES', 5.0)
+                ))
+                lam = max((avg_w / len(cutouts)) * equivalent_exposures, 1.0)
+                star_prior_precision[:] = lam
                 for k, f_init in enumerate(solver_init):
                     im = idx_stars + k
                     Hloc[im, im] += lam
@@ -1862,6 +1872,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
 
         fitted_star_fluxes = sol[idx_stars:idx_star_end]
         results['star_fluxes'] = fitted_star_fluxes.copy()
+        results['star_prior_precision'] = star_prior_precision.copy()
 
         if n_host > 0:
             flux_h = np.asarray(sol[idx_star_end : idx_star_end + n_host], dtype=np.float64)

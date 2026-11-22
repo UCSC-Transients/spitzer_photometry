@@ -7,6 +7,7 @@ import sep
 from astropy.io import fits
 from astropy.table import Table, vstack, Column
 from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_area, proj_plane_pixel_scales
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from scipy.spatial import cKDTree
@@ -100,7 +101,37 @@ def subtract_radial_profile(data, xc, yc):
 
 # --- DETECTION & FILTERING ---
 
-def detect_sources(data, wcs, sigma_map=None, is_template=False, mask_nucleus=True):
+def _scene_sample_to_integrated_jy_factor(wcs: WCS) -> float:
+    """Return the solid-angle factor for Jy/native-pixel scene samples.
+
+    Reprojected template samples retain the input numerical unit of
+    Jy/native-pixel even when the scene grid is supersampled.  A sum on that
+    grid therefore becomes integrated Jy only after multiplication by the
+    scene/native pixel solid-angle ratio.
+    """
+    native_area_deg2 = (float(config.PIXEL_SCALE) / 3600.0) ** 2
+    scene_area_deg2 = float(abs(proj_plane_pixel_area(wcs)))
+    if not np.isfinite(scene_area_deg2) or scene_area_deg2 <= 0.0:
+        raise ValueError("Catalog WCS has no finite positive pixel area")
+    return scene_area_deg2 / native_area_deg2
+
+
+def detect_sources(
+    data,
+    wcs,
+    sigma_map=None,
+    is_template=False,
+    mask_nucleus=True,
+    *,
+    integrated_jy_catalog=False,
+):
+    """Detect sources and optionally measure fixed-aperture integrated-Jy flux.
+
+    ``integrated_jy_catalog`` is appropriate only when ``data`` contains
+    reprojected Jy/native-pixel samples.  It applies the scene/native solid-angle
+    ratio and records aperture flux; the native-renderer aperture correction is
+    deliberately applied later, where the actual BCD WCS and renderer are known.
+    """
     h, w = data.shape
     kernel = get_ricker_kernel()
     valid_mask = get_valid_mask(data, border=5)
@@ -124,7 +155,11 @@ def detect_sources(data, wcs, sigma_map=None, is_template=False, mask_nucleus=Tr
 
     try:
         objects = sep.extract(detection_image, thresh, err=err,
-                              filter_kernel=kernel, minarea=3,
+                              # The legacy 5-pixel kernel changes angular size
+                              # with SR.  Fixed-sky catalog photometry instead
+                              # uses unfiltered connected-pixel detection.
+                              filter_kernel=None if integrated_jy_catalog else kernel,
+                              minarea=3,
                               deblend_cont=0.005, deblend_nthresh=32)
     except Exception as e:
         print(f"   SEP Extraction failed: {e}")
@@ -142,6 +177,9 @@ def detect_sources(data, wcs, sigma_map=None, is_template=False, mask_nucleus=Tr
 
     for i in range(len(objects)):
         ox, oy = objects['x'][i], objects['y'][i]
+        if not np.isfinite(ox) or not np.isfinite(oy):
+            keep[i] = False
+            continue
         ix, iy = int(ox), int(oy)
         if ix < 0 or ix >= w or iy < 0 or iy >= h: keep[i] = False; continue
         if not valid_mask[iy, ix]: keep[i] = False; continue
@@ -163,6 +201,38 @@ def detect_sources(data, wcs, sigma_map=None, is_template=False, mask_nucleus=Tr
     if wcs is not None:
         ra, dec = wcs.pixel_to_world_values(t['x'], t['y'])
         t['ra'] = ra; t['dec'] = dec
+    if integrated_jy_catalog:
+        if wcs is None:
+            raise ValueError("An explicit WCS is required for integrated-Jy catalog photometry")
+        scales_arcsec = np.asarray(proj_plane_pixel_scales(wcs), dtype=float) * 3600.0
+        pixel_scale_arcsec = float(np.sqrt(np.prod(np.abs(scales_arcsec))))
+        radius_arcsec = float(getattr(config, 'CATALOG_APERTURE_RADIUS_ARCSEC',
+                                      4.0 * config.PIXEL_SCALE))
+        radius_px = radius_arcsec / pixel_scale_arcsec
+        # Detection filtering is deliberately not used for photometry: its
+        # pixel-sized kernels change their angular scale with SR.  Measure the
+        # original template through a fixed sky aperture with a fixed sky
+        # background annulus instead.
+        photometry_image = np.ascontiguousarray(data, dtype=np.float64)
+        aperture_flux, _, aperture_flags = sep.sum_circle(
+            photometry_image,
+            np.asarray(t['x'], dtype=float),
+            np.asarray(t['y'], dtype=float),
+            radius_px,
+            bkgann=(1.5 * radius_px, 2.5 * radius_px),
+            subpix=5,
+        )
+        area_factor = _scene_sample_to_integrated_jy_factor(wcs)
+        aperture_flux_jy = np.asarray(aperture_flux, dtype=float) * area_factor
+        invalid = (~np.isfinite(aperture_flux_jy)) | (aperture_flux_jy <= 0.0)
+        # SEP segmentation sums are a conservative fallback when the fixed
+        # aperture touches invalid data; they receive the same area conversion.
+        aperture_flux_jy[invalid] = np.asarray(filtered_objs['flux'], dtype=float)[invalid] * area_factor
+        t['flux'] = aperture_flux_jy
+        t['catalog_aperture_flux_jy'] = aperture_flux_jy.copy()
+        t['catalog_aperture_radius_arcsec'] = np.full(len(t), radius_arcsec)
+        t['catalog_aperture_flags'] = np.asarray(aperture_flags, dtype=np.int64)
+        t['catalog_scene_to_native_area_factor'] = np.full(len(t), area_factor)
     return t
 
 # --- DATA LOADING ---
@@ -253,7 +323,14 @@ def get_or_create_source_catalog(file_list):
 
 def update_catalog_with_template(deep_template, wcs, template_name='deep_template'):
     print("Updating Catalog with Deep Template sources...")
-    t = detect_sources(deep_template, wcs, sigma_map=None, is_template=True, mask_nucleus=True)
+    t = detect_sources(
+        deep_template,
+        wcs,
+        sigma_map=None,
+        is_template=True,
+        mask_nucleus=True,
+        integrated_jy_catalog=True,
+    )
     if t is not None:
         t.add_column(Column([template_name] * len(t), name='filename', dtype='U'))
         cols = ['filename'] + [c for c in t.colnames if c != 'filename']

@@ -19,6 +19,71 @@ from . import config, diagnostics, gp_model, native_fit_campaign, preprocessing,
 warnings.simplefilter('ignore', category=AstropyWarning)
 
 
+def _native_renderer_aperture_fraction(
+    source: SkyCoord,
+    cutouts: list[dict],
+    scene_wcs,
+    scene_shape: tuple[int, int],
+    channel: str,
+    radius_arcsec: float,
+) -> float:
+    """Measure the catalog aperture fraction in the native point renderer.
+
+    The median over template BCDs accounts for native pixel integration, phase,
+    roll, detector position, and finite cutout support without renormalizing a
+    cropped response.  This is an instrumental convention match, not an
+    absolute IRAC aperture calibration.
+    """
+    fractions: list[float] = []
+    for entry in cutouts:
+        if not entry.get('is_template', False):
+            continue
+        native_shape = tuple(np.asarray(entry['data']).shape)
+        response = solver.native_point_source_column(
+            scene_wcs,
+            entry['wcs'],
+            scene_shape,
+            native_shape,
+            channel,
+            float(source.ra.deg),
+            float(source.dec.deg),
+            is_full_array=bool(entry.get('is_full_array', False)),
+        ).reshape(native_shape)
+        yy, xx = np.indices(native_shape, dtype=float)
+        ra, dec = entry['wcs'].pixel_to_world_values(xx, yy)
+        separation = source.separation(SkyCoord(ra, dec, unit='deg')).arcsec
+        fraction = float(np.sum(response[separation <= radius_arcsec]))
+        if np.isfinite(fraction) and fraction > 0.0:
+            fractions.append(fraction)
+    if not fractions:
+        raise ValueError("No template BCD provides a finite catalog-aperture response")
+    fraction = float(np.median(fractions))
+    if fraction <= np.finfo(float).eps:
+        raise ValueError("Catalog aperture contains no native-renderer response")
+    return fraction
+
+
+def _catalog_prior_flux_jy(
+    row,
+    source: SkyCoord,
+    cutouts: list[dict],
+    scene_wcs,
+    scene_shape: tuple[int, int],
+    channel: str,
+) -> tuple[float, float]:
+    """Convert a catalog aperture measurement to renderer-integrated Jy."""
+    aperture_flux = float(row['catalog_aperture_flux_jy']) if (
+        'catalog_aperture_flux_jy' in row.colnames
+    ) else float(row['flux'])
+    radius_arcsec = float(row['catalog_aperture_radius_arcsec']) if (
+        'catalog_aperture_radius_arcsec' in row.colnames
+    ) else float(getattr(config, 'CATALOG_APERTURE_RADIUS_ARCSEC', 4.0 * config.PIXEL_SCALE))
+    fraction = _native_renderer_aperture_fraction(
+        source, cutouts, scene_wcs, scene_shape, channel, radius_arcsec,
+    )
+    return aperture_flux / fraction, fraction
+
+
 def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     """
     Run catalog → alignment → cutouts → CR flag → star detect → joint solve.
@@ -151,11 +216,17 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         native_fit_campaign.apply_consensus_cr_masks(cutouts)
         print("   Detecting stars in analysis cutout (Robust Method)...")
         raw_stars_table = preprocessing.detect_sources(
-            median_stamp, scene_wcs, sigma_map=None, is_template=True, mask_nucleus=False,
+            median_stamp,
+            scene_wcs,
+            sigma_map=None,
+            is_template=True,
+            mask_nucleus=False,
+            integrated_jy_catalog=True,
         )
 
     solver_stars = []
     solver_init_fluxes = []
+    solver_prior_metadata = []
 
     print(f"\n   [Star Detection Report]")
     print(f"   {'Index':<5} {'Dist(as)':<10} {'Init Flux':<12} {'Category'}")
@@ -164,7 +235,9 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     if raw_stars_table is not None:
         for i, row in enumerate(raw_stars_table):
             sc = SkyCoord(row['ra'], row['dec'], unit='deg')
-            flux_val = float(row['flux'])
+            flux_val, aperture_fraction = _catalog_prior_flux_jy(
+                row, sc, cutouts, scene_wcs, scene_shape, chan_str,
+            )
             dist = sc.separation(target).arcsec
             if fit_on_native and dist > 40.0:
                 # Keep only stars near the analysis window for native stamps.
@@ -172,6 +245,14 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
             print(f"   {i:<5} {dist:<10.3f} {flux_val:<12.4e} Solver (all in joint fit)")
             solver_stars.append(sc)
             solver_init_fluxes.append(flux_val)
+            solver_prior_metadata.append({
+                'aperture_fraction': aperture_fraction,
+                'aperture_radius_arcsec': float(
+                    row['catalog_aperture_radius_arcsec']
+                    if 'catalog_aperture_radius_arcsec' in row.colnames
+                    else getattr(config, 'CATALOG_APERTURE_RADIUS_ARCSEC', 4.0 * config.PIXEL_SCALE)
+                ),
+            })
 
     print(f"   Total Detections: {len(raw_stars_table) if raw_stars_table else 0}")
     print(f"   Solver Stars:     {len(solver_stars)}")
@@ -205,6 +286,7 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         scene_wcs,
         n_epochs,
     )
+    results['star_catalog_prior_metadata'] = solver_prior_metadata
 
     if results is None:
         print("CRITICAL ERROR: Solver returned None.")

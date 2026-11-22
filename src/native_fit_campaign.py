@@ -15,7 +15,7 @@ from astropy.wcs import WCS
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import LogNorm
 from reproject import reproject_interp
-from scipy.ndimage import binary_dilation, median_filter
+from scipy.ndimage import binary_dilation, convolve, median_filter
 from scipy.optimize import minimize
 
 from astropy.coordinates import SkyCoord
@@ -434,7 +434,51 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             scatter = 1.4826 * np.nanmedian(np.abs(cube - reference), axis=0)
         noise = np.sqrt(sigma**2 + ref_sigma**2 + scatter**2)
         supported = np.sum(np.isfinite(cube), axis=0) >= min_references
-        cr = valid & supported & np.isfinite(noise) & ((data - reference) > threshold * noise)
+        pixel_candidate = valid & supported & np.isfinite(noise) & ((data - reference) > threshold * noise)
+
+        # A stable undersampled source can move substantial flux between native
+        # pixels as phase/roll changes.  Require the same candidate to be an
+        # excess in a local pixel-integrated footprint relative to every valid
+        # peer.  The statistical threshold is unchanged; this is a conservative
+        # sampling-consistency requirement, not error inflation.
+        radius = float(max(0.0, getattr(config, 'CR_CONSENSUS_APERTURE_RADIUS_PX', 2.5)))
+        rr = int(np.ceil(radius))
+        ky, kx = np.mgrid[-rr:rr + 1, -rr:rr + 1]
+        kernel = ((kx * kx + ky * ky) <= radius * radius).astype(float)
+
+        def footprint_sum(values, finite):
+            numerator = convolve(np.where(finite, values, 0.0), kernel, mode='constant', cval=0.0)
+            support = convolve(finite.astype(float), kernel, mode='constant', cval=0.0)
+            return np.where(support == kernel.sum(), numerator, np.nan)
+
+        target_aperture = footprint_sum(data, valid)
+        peer_apertures = np.asarray([
+            footprint_sum(ref, np.isfinite(ref)) for ref in references
+        ])
+        peer_error_apertures = np.asarray([
+            np.sqrt(footprint_sum(err * err, np.isfinite(err))) for err in errors
+        ])
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            # Maximum peer flux is deliberately conservative for a positive CR.
+            aperture_reference = np.nanmax(peer_apertures, axis=0)
+            aperture_ref_error = np.nanmax(peer_error_apertures, axis=0)
+            aperture_scatter = 1.4826 * np.nanmedian(
+                np.abs(peer_apertures - np.nanmedian(peer_apertures, axis=0)), axis=0,
+            )
+        target_aperture_error = np.sqrt(footprint_sum(sigma * sigma, valid))
+        aperture_noise = np.sqrt(
+            target_aperture_error**2 + aperture_ref_error**2 + aperture_scatter**2
+        )
+        aperture_supported = np.sum(np.isfinite(peer_apertures), axis=0) >= min_references
+        aperture_candidate = (
+            aperture_supported
+            & np.isfinite(target_aperture)
+            & np.isfinite(aperture_reference)
+            & np.isfinite(aperture_noise)
+            & ((target_aperture - aperture_reference) > threshold * aperture_noise)
+        )
+        cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
         masks.append(cr)
     # Apply together: rejection must not depend on frame iteration order.
