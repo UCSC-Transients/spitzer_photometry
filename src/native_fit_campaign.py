@@ -786,14 +786,14 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             masks.append(cr)
             continue
         references, errors = [], []
+        sample_x = 0.5 * (data.shape[1] - 1.0)
+        sample_y = 0.5 * (data.shape[0] - 1.0)
+        sample_ra, sample_dec = c['wcs'].pixel_to_world_values(
+            sample_x, sample_y,
+        )
         for j in peers:
             other = cutouts[j]
             vm = solver.valid_fit_mask(other)
-            sample_x = 0.5 * (data.shape[1] - 1.0)
-            sample_y = 0.5 * (data.shape[0] - 1.0)
-            sample_ra, sample_dec = c['wcs'].pixel_to_world_values(
-                sample_x, sample_y,
-            )
             peer_x, peer_y = other['wcs'].world_to_pixel_values(
                 sample_ra, sample_dec,
             )
@@ -859,15 +859,17 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         peak_excess: dict[tuple[int, int], bool] = {}
         peak_artifact_flux: dict[tuple[int, int], float | None] = {}
         peak_sampling_differs: dict[tuple[int, int], bool] = {}
+        peak_has_reference_source: dict[tuple[int, int], bool] = {}
         reference_state = {
             'data': reference,
             'sigma': noise,
             'valid': supported & np.isfinite(reference),
         }
         for cy, cx in zip(candidate_y.tolist(), candidate_x.tolist()):
-            if _native_position_is_near_local_peak(
+            has_reference_source = _native_position_is_near_local_peak(
                 reference_state, float(cx), float(cy),
-            ):
+            )
+            if has_reference_source:
                 peak = _native_local_peak_position(
                     reference_state, float(cx), float(cy),
                 )
@@ -876,6 +878,10 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             if peak is None:
                 continue
             peak_groups.setdefault(peak, []).append((cy, cx))
+            peak_has_reference_source[peak] = (
+                peak_has_reference_source.get(peak, False)
+                or has_reference_source
+            )
         unique_peaks = list(peak_groups)
         if unique_peaks:
             peak_ra, peak_dec = c['wcs'].pixel_to_world_values(
@@ -996,7 +1002,10 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     extended_radius,
                     threshold,
                 )
-                if lobe_result is None:
+                if (
+                    lobe_result is None
+                    and peak_has_reference_source.get(peak, False)
+                ):
                     peak_excess[peak] = False
                     continue
                 lobe_correction, lobe_variance = lobe_result or (0.0, 0.0)
