@@ -696,7 +696,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     )
                 )
             if common_support and len(peer_sums) >= min_references:
-                if support_clipped:
+                if sampling_differs and support_clipped:
                     continue
                 weights = 1.0 / np.asarray(peer_variances, dtype=float)
                 peer_reference = float(np.average(peer_sums, weights=weights))
