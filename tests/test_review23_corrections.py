@@ -6,6 +6,7 @@ import sep
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.wcs import WCS
+from scipy.special import erf
 
 from src import (
     config,
@@ -31,6 +32,37 @@ def _gaussian_prf(oversample: int = 20) -> np.ndarray:
     yy, xx = np.mgrid[-100:101, -100:101] / float(oversample)
     prf = np.exp(-(xx**2 + yy**2) / (2.0 * 0.9**2))
     return prf / prf.sum()
+
+
+def _static_cr_frames(*, gradient: float = 0.0, seed: int | None = None) -> list[dict]:
+    frames = []
+    size = 15
+    yy, xx = np.indices((size, size), dtype=float)
+    generator = np.random.default_rng(seed)
+    for index, phase in enumerate((0.0, 0.5, 0.5)):
+        wcs = _wcs(size, phase=phase)
+        x0, y0 = wcs.world_to_pixel_values(config.TRANSIENT_RA, config.TRANSIENT_DEC)
+        scale = np.sqrt(2.0) * 0.9
+        x_integral = 0.5 * (
+            erf((xx - x0 + 0.5) / scale) - erf((xx - x0 - 0.5) / scale)
+        )
+        y_integral = 0.5 * (
+            erf((yy - y0 + 0.5) / scale) - erf((yy - y0 - 0.5) / scale)
+        )
+        data = 1.0e-3 + 2.0e-3 * x_integral * y_integral + gradient * (xx - x0)
+        if seed is not None:
+            data = data + generator.normal(0.0, 1.0e-6, data.shape)
+        frames.append({
+            "data": data,
+            "sigma": np.full(data.shape, 1.0e-6),
+            "wcs": wcs,
+            "raw_wcs": wcs,
+            "epoch_id": 0,
+            "is_template": True,
+            "filename": f"static_{index}_ch2.fits",
+            "mjd": index / 10.0,
+        })
+    return frames
 
 
 def _catalog_row(
@@ -237,3 +269,46 @@ def test_nonnative_pipeline_uses_scene_catalog_grid_and_provenance(monkeypatch, 
     result = pipeline_fit.run_pipeline_fit_core(skip_pre_analysis_check=True)
     assert result is not None and len(captured["stars"]) == 1
     np.testing.assert_allclose(captured["initial_fluxes"], [truth_jy], rtol=2.0e-3)
+
+
+def test_consensus_cr_preserves_static_source_on_gradients_and_independent_noise():
+    cases = [
+        _static_cr_frames(gradient=-1.0e-5),
+        _static_cr_frames(gradient=-1.0e-4),
+    ]
+    cases.extend(_static_cr_frames(seed=seed) for seed in range(40))
+    for frames in cases:
+        native_fit_campaign.apply_consensus_cr_masks(frames)
+        assert [int(frame["cr_mask"].sum()) for frame in frames] == [0, 0, 0]
+
+
+def test_consensus_cr_batches_whole_frame_wcs_work(monkeypatch):
+    size = 128
+    wcs = _wcs(size)
+    frames = [{
+        "data": np.full((size, size), 1.0e-3),
+        "sigma": np.full((size, size), 1.0e-6),
+        "wcs": wcs.deepcopy(),
+        "raw_wcs": wcs.deepcopy(),
+        "epoch_id": 0,
+        "is_template": True,
+        "filename": f"scale_{index}_ch2.fits",
+        "mjd": index / 10.0,
+    } for index in range(3)]
+    coordinates = np.linspace(10, size - 11, 8).astype(int)
+    for y in coordinates:
+        for x in coordinates:
+            frames[0]["data"][y, x] += 2.0e-4
+    counts = {"calls": 0, "pixels": 0}
+    original = WCS.pixel_to_world_values
+
+    def counted(self, x, y, *args, **kwargs):
+        counts["calls"] += 1
+        counts["pixels"] += int(np.size(x))
+        return original(self, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(WCS, "pixel_to_world_values", counted)
+    native_fit_campaign.apply_consensus_cr_masks(frames)
+    assert [int(frame["cr_mask"].sum()) for frame in frames] == [64, 0, 0]
+    assert counts["calls"] <= 30
+    assert counts["pixels"] <= 400_000

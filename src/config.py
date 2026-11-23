@@ -68,6 +68,11 @@ CR_BRIGHT_CORE_GUARD_CENTER = "transient"
 # footprint.  This prevents ordinary phase/dither redistribution of a stable
 # undersampled point source from being classified as a CR.
 CR_CONSENSUS_APERTURE_RADIUS_PX = 4.0
+# Secondary native-aperture consistency test after the unchanged 8-sigma
+# candidate-pixel threshold.  The 1.9-sigma veto margin retains a deterministic
+# 20-sigma single-pixel CR after propagating aperture and local-background
+# uncertainty; the primary detection threshold remains eight sigma.
+CR_CONSENSUS_APERTURE_SIGMA = 1.9
 
 SPLIT_DATE_MJD = 58750.0
 EPOCH_WINDOW_DAYS = 1.0  # Maximum total span of a shared transient-flux group.
