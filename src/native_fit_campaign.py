@@ -641,7 +641,7 @@ def _native_candidate_impulse_estimate(
     state: dict,
     center: tuple[float, float],
     candidate: tuple[int, int],
-) -> tuple[float, float]:
+) -> tuple[float, float] | None:
     """Estimate a candidate's asymmetric native-pixel impulse.
 
     A static detector response may be sharply peaked, but opposite pixels at
@@ -652,8 +652,11 @@ def _native_candidate_impulse_estimate(
     left after asymmetric candidates is assigned there.
 
     Returns the positive detector-pixel difference and its significance using
-    the unchanged target uncertainties. Missing reflected support returns zero
-    evidence and leaves the conservative aperture decision unchanged.
+    the unchanged target uncertainties. The local affine sky is removed from
+    both the candidate and its reflected comparison, so a detector gradient
+    cannot move an artifact to the source center. Missing reflected or affine-
+    background support returns ``None`` and causes explicit conservative
+    localization abstention in :func:`apply_consensus_cr_masks`.
     """
     peak_x, peak_y = center
     candidate_y, candidate_x = candidate
@@ -662,6 +665,9 @@ def _native_candidate_impulse_estimate(
         and candidate_y == int(np.rint(peak_y))
     ):
         return 0.0, -np.inf
+    background = _native_local_affine_background(state, center)
+    if background is None:
+        return None
     mirror_x = 2.0 * peak_x - candidate_x
     mirror_y = 2.0 * peak_y - candidate_y
     valid = state['valid']
@@ -694,8 +700,19 @@ def _native_candidate_impulse_estimate(
     ])
     mirror_value = float(weights @ mirror_values)
     mirror_variance = float(np.square(weights) @ np.square(mirror_sigmas))
+    candidate_background = float(
+        background[0]
+        + background[1] * (candidate_x - peak_x)
+        + background[2] * (candidate_y - peak_y)
+    )
+    mirror_background = float(
+        background[0]
+        + background[1] * (mirror_x - peak_x)
+        + background[2] * (mirror_y - peak_y)
+    )
     difference = float(
-        data[candidate_y, candidate_x] - mirror_value
+        (data[candidate_y, candidate_x] - candidate_background)
+        - (mirror_value - mirror_background)
     )
     error = float(np.sqrt(
         sigma[candidate_y, candidate_x] ** 2 + mirror_variance,
@@ -703,6 +720,89 @@ def _native_candidate_impulse_estimate(
     if not np.isfinite(difference) or not np.isfinite(error) or error <= 0.0:
         return 0.0, -np.inf
     return max(0.0, difference), difference / error
+
+
+def _native_local_affine_background(
+    state: dict,
+    center: tuple[float, float],
+    *,
+    inner_radius: float = 3.0,
+    outer_radius: float = 6.0,
+    clip_sigma: float = 8.0,
+) -> np.ndarray | None:
+    """Fit a robust local affine sky around a native response.
+
+    Parameters
+    ----------
+    state
+        Native frame state containing ``data``, unchanged ``sigma`` and the
+        retained validity mask.
+    center
+        Subpixel ``(x, y)`` response center in the native frame.
+    inner_radius, outer_radius
+        Annulus bounds in native pixels. The source core and candidate pixels
+        remain outside the nuisance fit.
+    clip_sigma
+        Bounded-IRLS transition in units of the supplied uncertainties.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Coefficients ``(constant, x-gradient, y-gradient)`` relative to
+        ``center``. ``None`` means localization is not identifiable on the
+        retained support and the caller must abstain rather than guess.
+    """
+    center_x, center_y = center
+    data = np.asarray(state['data'], dtype=float)
+    sigma = np.asarray(state['sigma'], dtype=float)
+    valid = np.asarray(state['valid'], dtype=bool)
+    extent = int(np.ceil(float(outer_radius))) + 1
+    x0 = max(0, int(np.floor(center_x)) - extent)
+    x1 = min(data.shape[1], int(np.ceil(center_x)) + extent + 1)
+    y0 = max(0, int(np.floor(center_y)) - extent)
+    y1 = min(data.shape[0], int(np.ceil(center_y)) + extent + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
+    dx = xx + x0 - center_x
+    dy = yy + y0 - center_y
+    distance = np.hypot(dx, dy)
+    fit = (
+        valid[y0:y1, x0:x1]
+        & np.isfinite(data[y0:y1, x0:x1])
+        & np.isfinite(sigma[y0:y1, x0:x1])
+        & (sigma[y0:y1, x0:x1] > 0.0)
+        & (distance >= float(inner_radius))
+        & (distance <= float(outer_radius))
+    )
+    if np.count_nonzero(fit) < 6:
+        return None
+    design = np.column_stack((
+        np.ones(np.count_nonzero(fit), dtype=float),
+        dx[fit],
+        dy[fit],
+    ))
+    values = data[y0:y1, x0:x1][fit]
+    errors = sigma[y0:y1, x0:x1][fit]
+    weighted_design = design / errors[:, None]
+    if np.linalg.matrix_rank(weighted_design) < 3:
+        return None
+    coefficients = np.asarray([float(np.median(values)), 0.0, 0.0])
+    transition = float(max(clip_sigma, np.finfo(float).eps))
+    for _ in range(8):
+        normalized = (values - design @ coefficients) / errors
+        robust_weight = np.ones(normalized.shape, dtype=float)
+        large = np.abs(normalized) > transition
+        robust_weight[large] = transition / np.abs(normalized[large])
+        weighted = np.sqrt(robust_weight) / errors
+        updated = np.linalg.lstsq(
+            design * weighted[:, None], values * weighted, rcond=None,
+        )[0]
+        if np.allclose(updated, coefficients, rtol=1.0e-10, atol=1.0e-15):
+            coefficients = updated
+            break
+        coefficients = updated
+    return np.asarray(coefficients, dtype=float)
 
 
 def _native_response_centroid(
@@ -730,20 +830,85 @@ def _native_response_centroid(
     yy += y0
     distance = np.hypot(xx - peak_x, yy - peak_y)
     local_valid = valid[y0:y1, x0:x1] & np.isfinite(data[y0:y1, x0:x1])
-    background_pixels = local_valid & (distance >= 0.75 * radius)
-    if not np.any(background_pixels):
+    background = _native_local_affine_background(
+        state,
+        (float(peak_x), float(peak_y)),
+        inner_radius=0.75 * radius,
+        outer_radius=radius + 1.0,
+    )
+    if background is None:
         return float(peak_x), float(peak_y)
-    background = float(np.median(data[y0:y1, x0:x1][background_pixels]))
     source_pixels = local_valid & (distance <= radius)
+    affine_sky = background[0] + background[1] * (
+        xx - peak_x
+    ) + background[2] * (yy - peak_y)
     weights = np.where(
         source_pixels,
-        np.maximum(data[y0:y1, x0:x1] - background, 0.0),
+        np.maximum(data[y0:y1, x0:x1] - affine_sky, 0.0),
         0.0,
     )
     total = float(np.sum(weights))
     if not np.isfinite(total) or total <= np.finfo(float).eps:
         return float(peak_x), float(peak_y)
     return float(np.sum(weights * xx) / total), float(np.sum(weights * yy) / total)
+
+
+def _native_reproject_masked_reference(
+    data: np.ndarray,
+    valid: np.ndarray,
+    source_wcs,
+    target_wcs,
+    shape_out: tuple[int, int],
+    *,
+    order: str,
+) -> np.ndarray:
+    """Reproject peer data without allowing masked samples to poison splines.
+
+    Bilinear references retain the established NaN-mask behavior. Bicubic
+    references use normalized convolution of the zero-filled data and validity
+    weights, while a bilinear validity projection marks every target pixel that
+    directly depends on a masked sample unsupported. Thus a distant mask cannot
+    erase the full spline prefilter, and no value is invented at a local hole.
+    """
+    values = np.asarray(data, dtype=float)
+    support = np.asarray(valid, dtype=bool) & np.isfinite(values)
+    if order != 'bicubic' or np.all(support):
+        reference, _ = reproject_interp(
+            (np.where(support, values, np.nan), source_wcs),
+            target_wcs,
+            shape_out=shape_out,
+            order=order,
+        )
+        return np.asarray(reference, dtype=float)
+    weights = support.astype(float)
+    numerator, _ = reproject_interp(
+        (np.where(support, values, 0.0), source_wcs),
+        target_wcs,
+        shape_out=shape_out,
+        order='bicubic',
+    )
+    normalization, _ = reproject_interp(
+        (weights, source_wcs),
+        target_wcs,
+        shape_out=shape_out,
+        order='bicubic',
+    )
+    direct_support, _ = reproject_interp(
+        (weights, source_wcs),
+        target_wcs,
+        shape_out=shape_out,
+        order='bilinear',
+    )
+    usable = (
+        np.isfinite(numerator)
+        & np.isfinite(normalization)
+        & np.isfinite(direct_support)
+        & (np.abs(normalization) > np.finfo(float).eps)
+        & (direct_support >= 1.0 - 1.0e-10)
+    )
+    reference = np.full(tuple(shape_out), np.nan, dtype=float)
+    reference[usable] = numerator[usable] / normalization[usable]
+    return reference
 
 
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
@@ -813,10 +978,14 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     atol=1.0e-14,
                 )
             )
-            ref, _ = reproject_interp(
-                (np.where(vm, other['data'], np.nan), other['wcs']),
-                c['wcs'], shape_out=data.shape,
-                order='bilinear' if same_sampling else 'bicubic',
+            reference_order = 'bilinear' if same_sampling else 'bicubic'
+            ref = _native_reproject_masked_reference(
+                other['data'],
+                vm,
+                other['wcs'],
+                c['wcs'],
+                tuple(data.shape),
+                order=reference_order,
             )
             err, _ = reproject_interp((np.where(vm, other['sigma'], np.nan), other['wcs']),
                                       c['wcs'], shape_out=data.shape)
@@ -858,6 +1027,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         peak_groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
         peak_excess: dict[tuple[int, int], bool] = {}
         peak_artifact_flux: dict[tuple[int, int], float | None] = {}
+        peak_comparison_error: dict[tuple[int, int], float] = {}
         peak_sampling_differs: dict[tuple[int, int], bool] = {}
         peak_has_reference_source: dict[tuple[int, int], bool] = {}
         reference_state = {
@@ -987,6 +1157,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 comparison_error = float(np.sqrt(
                     target_error_value**2 + peer_reference_error**2
                 ))
+                peak_comparison_error[peak] = comparison_error
                 aperture_excess = target_sum_value - peer_reference
                 peak_excess[peak] = (
                     aperture_excess
@@ -1014,6 +1185,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     corrected_error = float(np.sqrt(
                         comparison_error**2 + lobe_variance,
                     ))
+                    peak_comparison_error[peak] = corrected_error
                     peak_excess[peak] = (
                         corrected_excess > aperture_sigma * corrected_error
                     )
@@ -1027,24 +1199,37 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         # excess to retain only as many strongest pixels as can carry that
         # excess; this avoids phase-interpolation neighbors around one CR while
         # preserving tied or unequal genuinely adjacent CR pixels.
+        localization_abstained = False
         for peak, candidates in peak_groups.items():
             if not peak_excess.get(peak, False):
                 continue
-            impulse_estimates = {
-                candidate: (
-                    _native_candidate_impulse_estimate(
-                        state,
-                        _native_response_centroid(reference_state, peak),
-                        candidate,
+            if peak_sampling_differs.get(peak, False):
+                response_center = _native_response_centroid(reference_state, peak)
+                estimated = {
+                    candidate: _native_candidate_impulse_estimate(
+                        state, response_center, candidate,
                     )
-                    if peak_sampling_differs.get(peak, False)
-                    else (
+                    for candidate in candidates
+                }
+                if any(value is None for value in estimated.values()):
+                    # Default-pipeline consequence: retain every affected
+                    # detector pixel when the affine localization nuisance is
+                    # not identifiable, and expose the abstention explicitly.
+                    localization_abstained = True
+                    continue
+                impulse_estimates = {
+                    candidate: value
+                    for candidate, value in estimated.items()
+                    if value is not None
+                }
+            else:
+                impulse_estimates = {
+                    candidate: (
                         max(0.0, float(data[candidate] - reference[candidate])),
                         float(candidate_score[candidate]),
                     )
-                )
-                for candidate in candidates
-            }
+                    for candidate in candidates
+                }
             ranked = sorted(candidates, key=lambda pos: (
                 impulse_estimates[pos][1], candidate_score[pos],
             ), reverse=True)
@@ -1054,11 +1239,15 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     aperture_candidate[cy, cx] = True
                 continue
             remaining_flux = max(0.0, float(artifact_flux))
+            group_comparison_error = peak_comparison_error.get(peak)
+            if group_comparison_error is None:
+                localization_abstained = True
+                continue
             selected_count = 0
             for cy, cx in ranked:
                 if (
                     selected_count > 0
-                    and remaining_flux <= aperture_sigma * comparison_error
+                    and remaining_flux <= aperture_sigma * group_comparison_error
                 ):
                     break
                 aperture_candidate[cy, cx] = True
@@ -1071,6 +1260,12 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 remaining_flux = max(0.0, remaining_flux - impulse_flux)
         cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
+        c['cr_localization_status'] = (
+            'unsupported_affine_background'
+            if localization_abstained
+            else 'supported'
+        )
+        c['cr_unsupported_pixel_count'] = int(np.count_nonzero(valid & ~supported))
         masks.append(cr)
     # Apply together: rejection must not depend on frame iteration order.
     for c, cr in zip(cutouts, masks):

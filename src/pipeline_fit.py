@@ -13,6 +13,7 @@ import sep
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.utils.exceptions import AstropyWarning
+from scipy.ndimage import binary_dilation
 
 from . import config, diagnostics, gp_model, native_fit_campaign, preprocessing, run_manifest, solver
 
@@ -170,7 +171,24 @@ def _catalog_frame_positive_outliers(
         + coefficients[2] * x_offset
         + coefficients[3] * y_offset
     )
-    return support & aperture_pixels & ((data - model) > threshold * sigma)
+    # The same retained support feeds the subsequent affine nuisance
+    # projection. Positive detector artifacts in either the source aperture or
+    # its background annulus must therefore be removed before that projection;
+    # otherwise an annulus CR is spread coherently across the frame by the
+    # fitted plane and can no longer be rejected by the pixelwise median.
+    measurement_pixels = aperture_pixels | annulus_pixels
+    positive = support & measurement_pixels & (
+        (data - model) > threshold * sigma
+    )
+    # Catalog products are reprojected before this classifier. A single native
+    # detector impulse therefore occupies a compact interpolation footprint,
+    # including low-amplitude negative lobes that cannot independently cross a
+    # positive-only threshold. Exclude the adjacent footprint from both data
+    # and response so those lobes cannot bias the subsequent affine nuisance.
+    return support & measurement_pixels & binary_dilation(
+        positive,
+        iterations=2,
+    )
 
 
 def _catalog_remove_affine_nuisance(
@@ -223,13 +241,20 @@ def _catalog_remove_affine_nuisance(
     weighted_design = design / sigma[fit_support, None]
     if np.linalg.matrix_rank(weighted_design) < 3:
         raise ValueError('Catalog frame affine background is not identifiable')
-    normal = weighted_design.T @ weighted_design
-    data_rhs = weighted_design.T @ (data[fit_support] / sigma[fit_support])
-    response_rhs = weighted_design.T @ (
-        response[fit_support] / sigma[fit_support]
-    )
-    data_coefficients = np.linalg.solve(normal, data_rhs)
-    response_coefficients = np.linalg.solve(normal, response_rhs)
+    # Solve the weighted rectangular problems directly.  Forming normal
+    # equations squares the condition number and left a measurable constant-
+    # sky residual on fine (SR=4) catalog grids after asymmetric CR masks.
+    # The two right-hand sides still use the identical retained design.
+    data_coefficients = np.linalg.lstsq(
+        weighted_design,
+        data[fit_support] / sigma[fit_support],
+        rcond=None,
+    )[0]
+    response_coefficients = np.linalg.lstsq(
+        weighted_design,
+        response[fit_support] / sigma[fit_support],
+        rcond=None,
+    )[0]
     full_design = np.stack((
         np.ones(data.shape, dtype=float), x_offset, y_offset,
     ), axis=-1)
