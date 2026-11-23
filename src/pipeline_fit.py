@@ -97,6 +97,82 @@ def _source_has_native_fit_support(
     return False
 
 
+def _catalog_frame_positive_outliers(
+    data: np.ndarray,
+    response: np.ndarray,
+    sigma: np.ndarray,
+    support: np.ndarray,
+    aperture_pixels: np.ndarray,
+    annulus_pixels: np.ndarray,
+    x_offset: np.ndarray,
+    y_offset: np.ndarray,
+    threshold: float = 8.0,
+) -> np.ndarray:
+    """Identify detector artifacts after fitting a source plus affine sky.
+
+    The fit is used only to classify positive outliers; neither the catalog
+    data nor its uncertainties are replaced.  A bounded IRLS fit prevents one
+    bright pixel from controlling the source amplitude while retaining a real
+    coherent gradient.  The exact rendered response is included in the same
+    design as the affine background, so detector-position PRF changes are not
+    mistaken for sky structure.
+    """
+    fit_support = support & (aperture_pixels | annulus_pixels)
+    if np.count_nonzero(fit_support) < 8:
+        return np.zeros(data.shape, dtype=bool)
+    design = np.column_stack((
+        response[fit_support],
+        np.ones(np.count_nonzero(fit_support), dtype=float),
+        x_offset[fit_support],
+        y_offset[fit_support],
+    ))
+    values = data[fit_support]
+    errors = sigma[fit_support]
+    annulus_fit = annulus_pixels[fit_support]
+    coefficients = np.zeros(4, dtype=float)
+    if np.count_nonzero(annulus_fit) >= 3:
+        background_design = design[annulus_fit, 1:]
+        coefficients[1:] = np.linalg.lstsq(
+            background_design / errors[annulus_fit, None],
+            values[annulus_fit] / errors[annulus_fit],
+            rcond=None,
+        )[0]
+    source_response = design[:, 0]
+    source_dominated = (
+        aperture_pixels[fit_support]
+        & (source_response > 1.0e-3 * np.max(source_response, initial=0.0))
+    )
+    if np.any(source_dominated):
+        background = design[:, 1:] @ coefficients[1:]
+        ratios = (
+            values[source_dominated] - background[source_dominated]
+        ) / source_response[source_dominated]
+        finite_ratios = ratios[np.isfinite(ratios)]
+        if finite_ratios.size:
+            coefficients[0] = float(np.median(finite_ratios))
+    clip = float(max(threshold, np.finfo(float).eps))
+    for _ in range(8):
+        normalized = (values - design @ coefficients) / errors
+        robust_weight = np.ones(normalized.shape, dtype=float)
+        large = np.abs(normalized) > clip
+        robust_weight[large] = clip / np.abs(normalized[large])
+        weighted = np.sqrt(robust_weight) / errors
+        updated = np.linalg.lstsq(
+            design * weighted[:, None], values * weighted, rcond=None,
+        )[0]
+        if np.allclose(updated, coefficients, rtol=1.0e-10, atol=1.0e-15):
+            coefficients = updated
+            break
+        coefficients = updated
+    model = (
+        coefficients[0] * response
+        + coefficients[1]
+        + coefficients[2] * x_offset
+        + coefficients[3] * y_offset
+    )
+    return support & aperture_pixels & ((data - model) > threshold * sigma)
+
+
 def _catalog_measurement_aperture_fraction(
     row,
     source: SkyCoord,
@@ -114,10 +190,7 @@ def _catalog_measurement_aperture_fraction(
     """
     if not catalog_frames:
         raise ValueError('No template frames are available for catalog calibration')
-    responses: list[np.ndarray] = []
-    supports: list[np.ndarray] = []
-    projected_data: list[np.ndarray] = []
-    projected_sigmas: list[np.ndarray] = []
+    frame_records: list[dict] = []
     for entry in catalog_frames:
         native_shape = tuple(entry.get('native_shape', ()))
         if len(native_shape) != 2 or min(native_shape) <= 0:
@@ -149,6 +222,8 @@ def _catalog_measurement_aperture_fraction(
             tuple(catalog_shape),
             return_support=True,
         )
+        data = None
+        projected_sigma = None
         if 'data' in entry:
             data = np.asarray(entry['data'], dtype=float)
             if data.shape != tuple(catalog_shape):
@@ -164,10 +239,12 @@ def _catalog_measurement_aperture_fraction(
                 if projected_sigma.shape != tuple(catalog_shape):
                     raise ValueError('Catalog projected error shape does not match its grid')
                 support &= np.isfinite(projected_sigma) & (projected_sigma > 0.0)
-                projected_sigmas.append(projected_sigma)
-            projected_data.append(data)
-        responses.append(projected)
-        supports.append(support)
+        frame_records.append({
+            'response': projected,
+            'support': support,
+            'data': data,
+            'sigma': projected_sigma,
+        })
 
     pixel_scale_arcsec = (
         float(np.sqrt(abs(np.linalg.det(catalog_wcs.pixel_scale_matrix)))) * 3600.0
@@ -183,18 +260,37 @@ def _catalog_measurement_aperture_fraction(
     subpix = int(row['catalog_aperture_subpix'])
     x = np.asarray([float(row['x'])])
     y = np.asarray([float(row['y'])])
+    yy, xx = np.indices(tuple(catalog_shape), dtype=float)
+    x_offset = xx - float(x[0])
+    y_offset = yy - float(y[0])
+    distance = np.hypot(x_offset, y_offset)
+    aperture_pixels = distance <= radius
+    annulus_pixels = (distance >= annulus[0]) & (distance <= annulus[1])
+    usable_records = []
+    for record in frame_records:
+        response = np.asarray(record['response'], dtype=float)
+        support = np.asarray(record['support'], dtype=bool)
+        source_support = support & aperture_pixels & np.isfinite(response)
+        response_scale = float(np.sum(np.abs(response[source_support])))
+        if (
+            np.any(support & annulus_pixels)
+            and np.any(source_support)
+            and response_scale > np.finfo(float).eps
+        ):
+            usable_records.append(record)
+    if not usable_records:
+        raise ValueError('No catalog exposure has supported source and background pixels')
+    responses = [np.asarray(record['response'], dtype=float) for record in usable_records]
+    supports = [np.asarray(record['support'], dtype=bool) for record in usable_records]
+    projected_data = [record['data'] for record in usable_records]
+    projected_sigmas = [record['sigma'] for record in usable_records]
     calibrated_flux = None
-    if len(projected_data) == len(responses):
+    if all(data is not None for data in projected_data):
         data_cube = np.asarray(projected_data, dtype=float).copy()
         response_cube = np.asarray(responses, dtype=float).copy()
         support_cube = np.asarray(supports, dtype=bool)
-        yy, xx = np.indices(tuple(catalog_shape), dtype=float)
-        distance = np.hypot(xx - float(x[0]), yy - float(y[0]))
-        annulus_pixels = (distance >= annulus[0]) & (distance <= annulus[1])
         for frame_index in range(data_cube.shape[0]):
             valid_annulus = support_cube[frame_index] & annulus_pixels
-            if not np.any(valid_annulus):
-                raise ValueError('Catalog frame has no valid background annulus')
             # Remove each frame's constant annulus level from both data and
             # unit response.  For data = background + flux * response this is
             # a matched linear operation, even when detector PRFs differ.
@@ -204,41 +300,22 @@ def _catalog_measurement_aperture_fraction(
             response_cube[frame_index] -= float(np.median(
                 response_cube[frame_index][valid_annulus],
             ))
-        # Estimate a common positive source amplitude from source-dominated
-        # pixels, then reject only positive, threshold-level departures before
-        # applying the median selector.  This restores pixel-level CR
-        # rejection even when different PRFs reorder the clean frame values.
-        aperture_pixels = distance <= radius
-        ratio_samples: list[np.ndarray] = []
-        for frame_index in range(data_cube.shape[0]):
-            source_response = np.abs(response_cube[frame_index])
-            response_peak = float(np.max(
-                source_response[support_cube[frame_index] & aperture_pixels],
-                initial=0.0,
-            ))
-            ratio_support = (
-                support_cube[frame_index]
-                & aperture_pixels
-                & (response_cube[frame_index] > 1.0e-3 * response_peak)
-            )
-            if np.any(ratio_support):
-                ratio_samples.append(
-                    data_cube[frame_index][ratio_support]
-                    / response_cube[frame_index][ratio_support]
-                )
-        if not ratio_samples:
-            raise ValueError('Catalog frames contain no source-response samples')
-        robust_flux = float(np.median(np.concatenate(ratio_samples)))
-        if not np.isfinite(robust_flux) or robust_flux <= 0.0:
-            raise ValueError('Catalog frames provide no positive robust source flux')
-        if len(projected_sigmas) == len(responses):
+        # Classify detector artifacts relative to each exposure's exact source
+        # response and a fitted affine sky.  Only the support changes: the
+        # catalog data, renderer response and uncertainties remain untouched.
+        if all(sigma is not None for sigma in projected_sigmas):
             sigma_cube = np.asarray(projected_sigmas, dtype=float)
-            positive_outlier = (
-                support_cube
-                & aperture_pixels[None, ...]
-                & ((data_cube - robust_flux * response_cube) > 8.0 * sigma_cube)
-            )
-            support_cube &= ~positive_outlier
+            for frame_index in range(data_cube.shape[0]):
+                support_cube[frame_index] &= ~_catalog_frame_positive_outliers(
+                    data_cube[frame_index],
+                    response_cube[frame_index],
+                    sigma_cube[frame_index],
+                    support_cube[frame_index],
+                    aperture_pixels,
+                    annulus_pixels,
+                    x_offset,
+                    y_offset,
+                )
         sortable_data = np.where(support_cube, data_cube, np.inf)
         order = np.argsort(sortable_data, axis=0, kind='stable')
         valid_count = np.sum(support_cube, axis=0)

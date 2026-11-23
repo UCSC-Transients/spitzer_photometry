@@ -581,6 +581,57 @@ def _native_local_peak_position(
     return x0 + int(peak_offset[1]), y0 + int(peak_offset[0])
 
 
+def _native_response_lobe_correction(
+    residual: np.ndarray,
+    noise: np.ndarray,
+    supported: np.ndarray,
+    x_center: float,
+    y_center: float,
+    radius: float,
+    threshold: float,
+) -> tuple[float, float]:
+    """Return signed outer-lobe correction and its propagated variance.
+
+    Pixel phase, roll and spatial PRF changes move source flux between nearby
+    native pixels, producing significant positive and negative residual lobes.
+    A positive detector artifact alone has no matching negative lobe. A
+    significant negative lobe triggers addition of the complete supported
+    outer ring to the aperture excess. Existing target/reference noise for
+    that ring is propagated; neither errors nor the 8-sigma and 1.9-sigma
+    thresholds are changed.
+    """
+    y0 = max(0, int(np.floor(y_center - radius)))
+    y1 = min(residual.shape[0], int(np.ceil(y_center + radius)) + 1)
+    x0 = max(0, int(np.floor(x_center - radius)))
+    x1 = min(residual.shape[1], int(np.ceil(x_center + radius)) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return 0.0, 0.0
+    yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
+    distance = np.hypot(xx + x0 - x_center, yy + y0 - y_center)
+    ring = (distance > radius / 1.5) & (distance <= radius)
+    local_noise = noise[y0:y1, x0:x1]
+    local_residual = residual[y0:y1, x0:x1]
+    valid_ring = (
+        supported[y0:y1, x0:x1]
+        & ring
+        & np.isfinite(local_noise)
+    )
+    negative_lobe = (
+        supported[y0:y1, x0:x1]
+        & (distance <= radius)
+        & np.isfinite(local_noise)
+        & (
+            local_residual < -threshold * local_noise
+        )
+    )
+    if not np.any(negative_lobe):
+        return 0.0, 0.0
+    return (
+        float(np.sum(local_residual[valid_ring])),
+        float(np.sum(np.square(local_noise[valid_ring]))),
+    )
+
+
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
     """Reject positive outliers unsupported by aligned BCDs in the same flux group.
 
@@ -665,6 +716,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         aperture_radius_arcsec = radius * target_scale_arcsec
         peak_groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
         peak_excess: dict[tuple[int, int], bool] = {}
+        peak_artifact_flux: dict[tuple[int, int], float | None] = {}
         for cy, cx in zip(candidate_y.tolist(), candidate_x.tolist()):
             peak = _native_local_peak_position(state, float(cx), float(cy))
             if peak is None:
@@ -760,14 +812,45 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 comparison_error = float(np.sqrt(
                     target_error_value**2 + peer_reference_error**2
                 ))
+                aperture_excess = target_sum_value - peer_reference
                 peak_excess[peak] = (
-                    target_sum_value - peer_reference
+                    aperture_excess
                 ) > aperture_sigma * comparison_error
+                peak_artifact_flux[peak] = None
+                extended_radius = 1.5 * radius
+                lobe_correction, lobe_variance = _native_response_lobe_correction(
+                    data - reference,
+                    noise,
+                    supported & valid,
+                    float(peak_x),
+                    float(peak_y),
+                    extended_radius,
+                    threshold,
+                )
+                if peak_excess[peak] and lobe_correction < 0.0:
+                    corrected_excess = aperture_excess + lobe_correction
+                    corrected_error = float(np.sqrt(
+                        comparison_error**2 + lobe_variance,
+                    ))
+                    peak_excess[peak] = (
+                        corrected_excess > aperture_sigma * corrected_error
+                    )
+                    if peak_excess[peak]:
+                        peak_artifact_flux[peak] = corrected_excess
+                elif peak_excess[peak] and sampling_differs:
+                    # Sampling changed without a significant negative outer
+                    # lobe. The aperture establishes a CR, but interpolation
+                    # can make adjacent pixels pass the pixel test; assign the
+                    # excess to the strongest candidate without vetoing it.
+                    peak_artifact_flux[peak] = 0.0
             else:
                 peak_excess[peak] = False
-        # One aperture excess can make several neighboring interpolation
-        # residuals pass.  Assign that excess only to the strongest native
-        # candidate associated with the same local source peak.
+        # Without a signed response lobe, every independently thresholded
+        # native pixel in an aperture-supported group is an artifact candidate.
+        # If response redistribution was present, use its conserved positive
+        # excess to retain only as many strongest pixels as can carry that
+        # excess; this avoids phase-interpolation neighbors around one CR while
+        # preserving tied or unequal genuinely adjacent CR pixels.
         for peak, candidates in peak_groups.items():
             if not peak_excess.get(peak, False):
                 continue
@@ -776,20 +859,17 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 key=lambda pos: candidate_score[pos],
                 reverse=True,
             )
-            # A detector-response change can produce a symmetric group of
-            # equally strong positive core residuals while conserving source
-            # flux outside the fixed comparison aperture.  A CR is localized:
-            # require a strictly prominent native-pixel excess rather than a
-            # numerically flat maximum.  The 8-sigma pixel and 1.9-sigma
-            # aperture thresholds remain unchanged.
-            if (
-                len(ranked) > 1
-                and candidate_score[ranked[0]] - candidate_score[ranked[1]]
-                <= 1.0e-8 * max(1.0, abs(candidate_score[ranked[0]]))
-            ):
+            artifact_flux = peak_artifact_flux.get(peak)
+            if artifact_flux is None:
+                for cy, cx in ranked:
+                    aperture_candidate[cy, cx] = True
                 continue
-            cy, cx = ranked[0]
-            aperture_candidate[cy, cx] = True
+            assigned_flux = 0.0
+            for cy, cx in ranked:
+                aperture_candidate[cy, cx] = True
+                assigned_flux += max(0.0, float(data[cy, cx] - reference[cy, cx]))
+                if assigned_flux >= artifact_flux:
+                    break
         cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
         masks.append(cr)
