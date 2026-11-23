@@ -108,13 +108,33 @@ def run_validation(output_dir: str | Path, trials: int = 3, truth_flux_jy: float
                         prediction = solver.predict_cutout_model(result, cutouts, [], [], 0)
                     flux, error = float(result['transient_fluxes'][0]), float(result['transient_errs'][0])
                     z = (cutouts[0]['data'] - prediction) / noise
-                    _validate_trial_values(
-                        flux_jy=flux,
-                        error_jy=error,
-                        truth_jy=truth,
-                        prediction=prediction,
-                        residual_z=z,
-                    )
+                    try:
+                        _validate_trial_values(
+                            flux_jy=flux,
+                            error_jy=error,
+                            truth_jy=truth,
+                            prediction=prediction,
+                            residual_z=z,
+                        )
+                    except RuntimeError as validation_error:
+                        report = {
+                            'status': 'failed',
+                            'kind': 'synthetic_internal_consistency',
+                            'failure_kind': 'invalid_science_output',
+                            'error': str(validation_error),
+                            'trials_per_sr': trials,
+                            'truth_flux_jy': truth,
+                            'rows': rows,
+                            'max_abs_pull': None,
+                            'notes': (
+                                'Validation stopped before pull calculation; '
+                                'the saved artifact records the failed run.'
+                            ),
+                        }
+                        (dest / 'internal_consistency.json').write_text(
+                            json.dumps(report, indent=2, allow_nan=False) + '\n'
+                        )
+                        return report
                     rows.append(dict(sr=sr, seed=seed, flux_jy=flux, error_jy=error,
                                      truth_jy=truth, pull=(flux - truth) / error,
                                      residual_z_mean=float(z.mean()), residual_z_std=float(z.std())))
@@ -123,9 +143,20 @@ def run_validation(output_dir: str | Path, trials: int = 3, truth_flux_jy: float
     pulls = np.array([r['pull'] for r in rows])
     if not np.isfinite(pulls).all():
         raise RuntimeError('Validation failed: recovery pull contains nonfinite values')
-    report = dict(status='passed', kind='synthetic_internal_consistency', trials_per_sr=trials,
-                  truth_flux_jy=truth, rows=rows, max_abs_pull=float(np.max(np.abs(pulls))),
-                  notes='Repeated seeds across SR are correlated; do not interpret them as independent coverage trials.')
+    max_abs_pull = float(np.max(np.abs(pulls)))
+    accepted = max_abs_pull <= 5.0
+    report = dict(
+        status='passed' if accepted else 'failed',
+        kind='synthetic_internal_consistency',
+        failure_kind=None if accepted else 'acceptance_threshold',
+        trials_per_sr=trials,
+        truth_flux_jy=truth,
+        rows=rows,
+        max_abs_pull=max_abs_pull,
+        notes='Repeated seeds across SR are correlated; do not interpret them as independent coverage trials.',
+    )
+    if not accepted:
+        report['error'] = 'Synthetic recovery failed the predeclared 5-sigma regression bound'
     (dest / 'internal_consistency.json').write_text(
         json.dumps(report, indent=2, allow_nan=False) + '\n'
     )
@@ -167,19 +198,30 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run_validation(args.output_dir, args.trials, args.truth_flux_jy)
     except (RuntimeError, ValueError) as error:
-        print(json.dumps({'status': 'failed', 'error': str(error)}, indent=2, allow_nan=False))
+        report = {
+            'status': 'failed',
+            'kind': 'synthetic_internal_consistency',
+            'failure_kind': 'execution_error',
+            'error': str(error),
+            'trials_per_sr': args.trials,
+            'truth_flux_jy': args.truth_flux_jy,
+            'rows': [],
+            'max_abs_pull': None,
+        }
+        destination = Path(args.output_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / 'internal_consistency.json').write_text(
+            json.dumps(report, indent=2, allow_nan=False) + '\n'
+        )
+        print(json.dumps(report, indent=2, allow_nan=False))
         return 2
     print(json.dumps(
         {k: v for k, v in report.items() if k != 'rows'},
         indent=2,
         allow_nan=False,
     ))
-    if report['max_abs_pull'] > 5:
-        print(json.dumps({
-            'status': 'failed',
-            'error': 'Synthetic recovery failed the predeclared 5-sigma regression bound',
-        }, indent=2, allow_nan=False))
-        return 3
+    if report['status'] != 'passed':
+        return 3 if report.get('failure_kind') == 'acceptance_threshold' else 2
     return 0
 
 

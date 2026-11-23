@@ -169,6 +169,7 @@ _PRF_OPERATOR_BUNDLE_CACHE = {}
 # where vec(L(img)) = A @ vec(img)
 _PRF_EXACT_OPERATOR_CACHE = {}
 _PRF_NATIVE_OPERATOR_BUNDLE_CACHE = {}
+_WCS_PROVENANCE_CACHE = {}
 
 
 def _directory_calibration_fingerprint(path: str) -> tuple:
@@ -212,6 +213,7 @@ def _prf_cache_fingerprint(channel: str) -> tuple:
         'PRF_PIXEL_SCALE_ARCSEC',
         'PRF_PREBLUR_IN_OVERSAMPLE_PIXELS',
         'PRF_APPLY_PMAP_GAIN',
+        'PRF_APPLY_APODIZATION',
         'PRF_APODIZATION_EDGE',
         'PRF_SPATIAL_ANCHORS_PER_AXIS',
         'PRF_OPERATOR_MODE',
@@ -269,8 +271,10 @@ def _estimate_solver_peak_memory_bytes(
     scene_crossproduct = itemsize * n_scene * n_scene
     assembly_workspace = rectangular_design + scene_crossproduct
 
+    factorization_workspace = itemsize * n_params * n_params
     covariance_workspace = itemsize * (
         n_params * n_params  # scaled Hessian
+        + n_params * n_params  # Cholesky factorization copy/work array
         + 2 * n_params * n_chosen  # unit RHS and selected solve columns
         + n_chosen * n_chosen  # selected covariance
         + 4 * n_params
@@ -280,13 +284,17 @@ def _estimate_solver_peak_memory_bytes(
     mode = _prf_operator_mode(scene_shape)
     project_then_convolve = bool(getattr(config, 'PRF_ORDER_PROJECT_THEN_CONVOLVE', False))
     exact_operators = 0
-    anchor_operators = 0
     n_anchor = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3))) ** 2
+    # Scene-anchor kernels are retained for the PRF-support/edge diagnostic in
+    # every mode, including exact. Project-then-convolve additionally retains
+    # a native-grid anchor bundle while assembling the exact frame design.
+    scene_anchor_operators = itemsize * (2 * n_anchor + 1) * n_frames * n_scene
+    native_anchor_operators = 0
+    if project_then_convolve:
+        native_anchor_operators = itemsize * (2 * n_anchor + 1) * sum(n_native_each)
     if mode == 'exact' and not project_then_convolve:
         exact_operators = itemsize * n_frames * n_scene * n_scene
-    else:
-        operator_pixels = sum(n_native_each) if project_then_convolve else n_frames * n_scene
-        anchor_operators = itemsize * (2 * n_anchor + 1) * operator_pixels
+    anchor_operators = scene_anchor_operators + native_anchor_operators
 
     geometry_and_vectors = itemsize * (
         n_scene_total * 8 + sum(n_native_each) * 6 + n_params * 6
@@ -300,9 +308,12 @@ def _estimate_solver_peak_memory_bytes(
         'rectangular_design_bytes': int(rectangular_design),
         'scene_crossproduct_bytes': int(scene_crossproduct),
         'covariance_workspace_bytes': int(covariance_workspace),
+        'factorization_workspace_bytes': int(factorization_workspace),
         'bounded_fallback_workspace_bytes': int(bounded_fallback_workspace),
         'exact_operator_cache_bytes': int(exact_operators),
         'anchor_operator_cache_bytes': int(anchor_operators),
+        'scene_anchor_operator_cache_bytes': int(scene_anchor_operators),
+        'native_anchor_operator_cache_bytes': int(native_anchor_operators),
         'geometry_and_vector_bytes': int(geometry_and_vectors),
         'n_params': int(n_params),
     }
@@ -662,15 +673,47 @@ def _apply_prf_adjoint(y_scene, scene_wcs, w_native, scene_shape, channel, is_fu
     return _apply_prf_adjoint_from_bundle(y2, kernels, weights, wsum)
 
 
+def _stable_cache_float(value) -> float | tuple[str, int]:
+    """Return a hashable float token whose NaN values compare equal."""
+    number = float(value)
+    if np.isnan(number):
+        return ('nan', 0)
+    if np.isposinf(number):
+        return ('inf', 1)
+    if np.isneginf(number):
+        return ('inf', -1)
+    return number
+
+
+def _stable_cache_float_tuple(values) -> tuple:
+    return tuple(_stable_cache_float(value) for value in np.asarray(values).ravel())
+
+
 def _wcs_key(w: WCS):
     ww = w.wcs
     return (
-        tuple(np.asarray(w.pixel_scale_matrix, dtype=float).ravel().tolist()),
-        tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
-        tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, "cdelt", [np.nan, np.nan]), dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, "pc", np.eye(2)), dtype=float).ravel().tolist()),
+        _stable_cache_float_tuple(w.pixel_scale_matrix),
+        _stable_cache_float_tuple(ww.crpix),
+        _stable_cache_float_tuple(ww.crval),
+        _stable_cache_float_tuple(getattr(ww, "cdelt", [np.nan, np.nan])),
+        _stable_cache_float_tuple(getattr(ww, "pc", np.eye(2))),
         tuple(getattr(ww, "ctype", ["", ""])),
+        tuple(str(value) for value in getattr(ww, 'cunit', ())),
+        tuple(str(value) for value in getattr(ww, 'cname', ())),
+        _stable_cache_float(getattr(ww, 'lonpole', np.nan)),
+        _stable_cache_float(getattr(ww, 'latpole', np.nan)),
+        _stable_cache_float(getattr(ww, 'equinox', np.nan)),
+        str(getattr(ww, 'radesys', '')),
+        str(getattr(ww, 'specsys', '')),
+        _stable_cache_float(getattr(ww, 'restfrq', np.nan)),
+        _stable_cache_float(getattr(ww, 'restwav', np.nan)),
+        _stable_cache_float(getattr(ww, 'velosys', np.nan)),
+        str(getattr(ww, 'dateobs', '')),
+        _stable_cache_float(getattr(ww, 'mjdobs', np.nan)),
+        _stable_cache_float_tuple(getattr(ww, 'obsgeo', ())),
+        tuple((int(axis), int(parameter), _stable_cache_float(value))
+              for axis, parameter, value in ww.get_pv()),
+        tuple(tuple(value) for value in ww.get_ps()),
     )
 
 
@@ -695,8 +738,93 @@ def _sip_distortion_fingerprint(w: WCS) -> tuple:
     return ("sip", tuple(np.asarray(sip.crpix, dtype=float)), tuple(parts))
 
 
+def _lookup_distortion_fingerprint(w: WCS) -> tuple:
+    """Fingerprint FITS lookup-table distortions not represented by SIP."""
+    parts = []
+    for name in ('cpdis1', 'cpdis2', 'det2im1', 'det2im2'):
+        table = getattr(w, name, None)
+        if table is None:
+            parts.append((name, None))
+            continue
+        data = np.ascontiguousarray(getattr(table, 'data', np.zeros(0)), dtype=np.float64)
+        parts.append((
+            name,
+            hashlib.sha256(data.tobytes()).hexdigest(),
+            tuple(np.asarray(getattr(table, 'crpix', ()), dtype=float).ravel()),
+            tuple(np.asarray(getattr(table, 'crval', ()), dtype=float).ravel()),
+            tuple(np.asarray(getattr(table, 'cdelt', ()), dtype=float).ravel()),
+        ))
+    return tuple(parts)
+
+
+def _wcs_fast_mutation_key(w: WCS) -> tuple:
+    """Cheap transform token used to validate a cached full WCS fingerprint."""
+    ww = w.wcs
+    return (
+        tuple(np.asarray(w.pixel_scale_matrix, dtype=float).ravel().tolist()),
+        tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
+        tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'cdelt', [1.0, 1.0]), dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'pc', np.eye(2)), dtype=float).ravel().tolist()),
+        tuple(getattr(ww, 'ctype', ('', ''))),
+        _sip_distortion_fingerprint(w),
+    )
+
+
+def _wcs_provenance_fingerprint(w: WCS, *, include_detector: bool = True) -> tuple:
+    """Return a content identity for sky and attached detector-coordinate WCSs.
+
+    The FITS header captures all serialized WCS axes/metadata, while explicit
+    SIP and lookup-table hashes cover distortion objects that Astropy may keep
+    outside the primary header. Attached full-detector WCS provenance is part
+    of PRF cache identity even when two analysis cutouts have identical WCSs.
+    """
+    detector = getattr(w, '_detector_wcs', None)
+    detector_token = None
+    if include_detector and detector is not None and detector is not w:
+        detector_token = (
+            _wcs_fast_mutation_key(detector),
+            tuple(getattr(detector, 'pixel_shape', ()) or ()),
+            tuple(getattr(detector, 'array_shape', ()) or ()),
+            tuple(getattr(detector, 'pixel_bounds', ()) or ()),
+        )
+    token = (
+        _wcs_fast_mutation_key(w),
+        tuple(getattr(w, 'pixel_shape', ()) or ()),
+        tuple(getattr(w, 'array_shape', ()) or ()),
+        tuple(getattr(w, 'pixel_bounds', ()) or ()),
+        detector_token,
+    )
+    cached = _WCS_PROVENANCE_CACHE.get(id(w))
+    if cached is not None and cached[0] is w and cached[1] == token:
+        return cached[2]
+
+    header = w.to_header(relax=True)
+    header_hash = hashlib.sha256(
+        header.tostring(sep='\n', endcard=False, padding=False).encode('utf-8')
+    ).hexdigest()
+    base = (
+        header_hash,
+        _wcs_key(w),
+        _sip_distortion_fingerprint(w),
+        _lookup_distortion_fingerprint(w),
+        tuple(getattr(w, 'pixel_shape', ()) or ()),
+        tuple(getattr(w, 'array_shape', ()) or ()),
+        tuple(getattr(w, 'pixel_bounds', ()) or ()),
+    )
+    if include_detector and detector is not None and detector is not w:
+        result = base + (('detector_wcs', _wcs_provenance_fingerprint(
+            detector,
+            include_detector=False,
+        )),)
+    else:
+        result = base + (('detector_wcs', None),)
+    _WCS_PROVENANCE_CACHE[id(w)] = (w, token, result)
+    return result
+
+
 def _wcs_projection_cache_key(w: WCS) -> tuple:
-    return (_wcs_key(w), _sip_distortion_fingerprint(w))
+    return _wcs_provenance_fingerprint(w)
 
 
 def _projection_matrix(scene_wcs: WCS, native_wcs: WCS, scene_shape, native_shape):
@@ -1336,6 +1464,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     _PRF_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_NATIVE_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_EXACT_OPERATOR_CACHE.clear()
+    _WCS_PROVENANCE_CACHE.clear()
     _prf_cache_fingerprint_cached.cache_clear()
     
     if not cutouts: return None
@@ -1397,6 +1526,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         'uncertainty_status': 'not_computed',
         'uncertainty_failure_reason': None,
         'identifiability_status': 'not_assessed',
+        'identifiability_diagnostics': {},
     }
 
     try:
@@ -2150,6 +2280,37 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             ):
                 raise np.linalg.LinAlgError(
                     'selected covariance has nonfinite or nonpositive variance'
+                )
+            covariance_scale = np.sqrt(covariance_diagonal)
+            covariance_correlation = (
+                cov / covariance_scale[:, None] / covariance_scale[None, :]
+            )
+            correlation_eigenvalues = np.linalg.eigvalsh(covariance_correlation)
+            correlation_max = float(np.max(correlation_eigenvalues))
+            correlation_min = float(np.min(correlation_eigenvalues))
+            correlation_rcond = (
+                correlation_min / correlation_max
+                if correlation_max > 0.0
+                else 0.0
+            )
+            identifiability_rcond = float(
+                getattr(config, 'SOLVER_IDENTIFIABILITY_RCOND', 1.0e-10)
+            )
+            results['identifiability_diagnostics'] = {
+                'selected_parameter_count': int(len(chosen)),
+                'covariance_correlation_min_eigenvalue': correlation_min,
+                'covariance_correlation_max_eigenvalue': correlation_max,
+                'covariance_correlation_rcond': correlation_rcond,
+                'required_rcond': identifiability_rcond,
+            }
+            if (
+                not np.isfinite(correlation_rcond)
+                or correlation_rcond <= identifiability_rcond
+            ):
+                raise np.linalg.LinAlgError(
+                    'selected fitted-parameter covariance has a scale-aware '
+                    f'near-null combination (rcond={correlation_rcond:.3e}, '
+                    f'required>{identifiability_rcond:.3e})'
                 )
             sig = np.full(n_params, np.nan)
             sig[chosen] = np.sqrt(covariance_diagonal)

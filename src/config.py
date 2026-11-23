@@ -172,6 +172,10 @@ GALAXY_QA_ANNULUS_OUTER_PX = 14.0
 # so cutout/native fits use the same dense GP prior as smaller reprojected stamps.
 MAX_SCENE_PIXELS = 25000
 SOLVER_DENSE_MEMORY_LIMIT_BYTES = 4_000_000_000
+# A nuisance-marginalized fitted-parameter covariance whose normalized
+# correlation matrix has a smaller eigenvalue ratio is treated as near-null.
+# This is dimensionless and therefore invariant to image noise/unit scaling.
+SOLVER_IDENTIFIABILITY_RCOND = 1.0e-10
 # Scene GP stationary kernel: "matern32" (smooth) or "matern12" (exponential / rougher).
 GP_MATERN_ORDER = "matern32"
 # Precision build: "matern" (default Matérn) or "diagonal" (sparse ε·I, diagnostics / tests).

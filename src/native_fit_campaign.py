@@ -11,11 +11,12 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import sep
 from astropy.wcs import WCS
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import LogNorm
 from reproject import reproject_interp
-from scipy.ndimage import binary_dilation, convolve, median_filter
+from scipy.ndimage import binary_dilation, median_filter
 from scipy.optimize import minimize
 
 from astropy.coordinates import SkyCoord
@@ -413,7 +414,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             c['cr_status'] = 'insufficient_references'
             masks.append(cr)
             continue
-        references, errors = [], []
+        references, errors, background_offsets = [], [], []
         for j in peers:
             other = cutouts[j]
             vm = solver.valid_fit_mask(other)
@@ -422,10 +423,11 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             err, _ = reproject_interp((np.where(vm, other['sigma'], np.nan), other['wcs']),
                                       c['wcs'], shape_out=data.shape)
             overlap = valid & np.isfinite(ref) & np.isfinite(err)
-            if np.any(overlap):
-                ref += np.median(data[overlap] - ref[overlap])
+            offset = float(np.median(data[overlap] - ref[overlap])) if np.any(overlap) else 0.0
+            ref += offset
             references.append(ref)
             errors.append(err)
+            background_offsets.append(offset)
         cube = np.asarray(references)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', RuntimeWarning)
@@ -437,50 +439,94 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         pixel_candidate = valid & supported & np.isfinite(noise) & ((data - reference) > threshold * noise)
 
         # A stable undersampled source can move substantial flux between native
-        # pixels as phase/roll changes.  Require the same candidate to be an
-        # excess in a local pixel-integrated footprint relative to every valid
-        # peer.  The statistical threshold is unchanged; this is a conservative
-        # sampling-consistency requirement, not error inflation.
+        # pixels as phase/roll changes. Compare local integrated flux directly
+        # on each native detector grid. If any target/peer aperture is clipped
+        # or contains an invalid pixel, abstain: different sky support must not
+        # turn interpolation structure into a CR. The unchanged 8-sigma pixel
+        # test above and the aperture excess use the same unchanged 8-sigma
+        # scale; neither the data errors nor the configured threshold change.
         radius = float(max(0.0, getattr(config, 'CR_CONSENSUS_APERTURE_RADIUS_PX', 4.0)))
-        rr = int(np.ceil(radius))
-        ky, kx = np.mgrid[-rr:rr + 1, -rr:rr + 1]
-        kernel = ((kx * kx + ky * ky) <= radius * radius).astype(float)
-
-        def footprint_sum(values, finite):
-            numerator = convolve(np.where(finite, values, 0.0), kernel, mode='constant', cval=0.0)
-            support = convolve(finite.astype(float), kernel, mode='constant', cval=0.0)
-            # Use the same clipped footprint near detector/cutout boundaries;
-            # abstain only when fewer than half of its pixels are supported.
-            min_support = max(3.0, np.ceil(0.5 * kernel.sum()))
-            return np.where(support >= min_support, numerator, np.nan)
-
-        target_aperture = footprint_sum(data, valid)
-        peer_apertures = np.asarray([
-            footprint_sum(ref, np.isfinite(ref)) for ref in references
-        ])
-        peer_error_apertures = np.asarray([
-            np.sqrt(footprint_sum(err * err, np.isfinite(err))) for err in errors
-        ])
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', RuntimeWarning)
-            # Maximum peer flux is deliberately conservative for a positive CR.
-            aperture_reference = np.nanmax(peer_apertures, axis=0)
-            aperture_ref_error = np.nanmax(peer_error_apertures, axis=0)
-            aperture_scatter = 1.4826 * np.nanmedian(
-                np.abs(peer_apertures - np.nanmedian(peer_apertures, axis=0)), axis=0,
+        aperture_candidate = np.zeros(data.shape, dtype=bool)
+        candidate_y, candidate_x = np.nonzero(pixel_candidate)
+        target_scale_arcsec = 3600.0 * float(
+            np.sqrt(abs(np.linalg.det(c['wcs'].pixel_scale_matrix)))
+        )
+        aperture_radius_arcsec = radius * target_scale_arcsec
+        for cy, cx in zip(candidate_y.tolist(), candidate_x.tolist()):
+            center = SkyCoord(
+                *c['wcs'].pixel_to_world_values(float(cx), float(cy)),
+                unit='deg',
             )
-        target_aperture_error = np.sqrt(footprint_sum(sigma * sigma, valid))
-        aperture_noise = np.sqrt(
-            target_aperture_error**2 + aperture_ref_error**2 + aperture_scatter**2
-        )
-        aperture_supported = np.sum(np.isfinite(peer_apertures), axis=0) >= min_references
-        aperture_candidate = (
-            aperture_supported
-            & np.isfinite(target_aperture)
-            & np.isfinite(aperture_reference)
-            & np.isfinite(aperture_noise)
-            & ((target_aperture - aperture_reference) > threshold * aperture_noise)
-        )
+            target_y, target_x = np.indices(data.shape, dtype=float)
+            target_ra, target_dec = c['wcs'].pixel_to_world_values(target_x, target_y)
+            target_coords = SkyCoord(target_ra, target_dec, unit='deg')
+            target_disk = target_coords.separation(center).arcsec <= aperture_radius_arcsec
+            if not np.any(target_disk) or not np.all(valid[target_disk]):
+                continue
+            target_level = float(np.median(data[valid]))
+            target_sum = float(sep.sum_circle(
+                np.ascontiguousarray(data - target_level, dtype=np.float64),
+                np.asarray([float(cx)]),
+                np.asarray([float(cy)]),
+                radius,
+                subpix=5,
+            )[0][0])
+            target_area = float(sep.sum_circle(
+                np.ones(data.shape, dtype=np.float64),
+                np.asarray([float(cx)]),
+                np.asarray([float(cy)]),
+                radius,
+                subpix=5,
+            )[0][0])
+            peer_sums: list[float] = []
+            common_support = True
+            for peer_index, offset in zip(peers, background_offsets):
+                other = cutouts[peer_index]
+                other_data = np.asarray(other['data'], dtype=float)
+                other_valid = solver.valid_fit_mask(other)
+                other_y, other_x = np.indices(other_data.shape, dtype=float)
+                other_ra, other_dec = other['wcs'].pixel_to_world_values(other_x, other_y)
+                other_coords = SkyCoord(other_ra, other_dec, unit='deg')
+                other_disk = other_coords.separation(center).arcsec <= aperture_radius_arcsec
+                px, py = other['wcs'].world_to_pixel_values(center.ra.deg, center.dec.deg)
+                px = float(np.asarray(px).ravel()[0])
+                py = float(np.asarray(py).ravel()[0])
+                if (
+                    not np.any(other_disk)
+                    or not np.all(other_valid[other_disk])
+                ):
+                    common_support = False
+                    break
+                peer_radius = aperture_radius_arcsec / (
+                    3600.0 * float(np.sqrt(abs(np.linalg.det(other['wcs'].pixel_scale_matrix))))
+                )
+                peer_area = float(sep.sum_circle(
+                    np.ones(other_data.shape, dtype=np.float64),
+                    np.asarray([px]),
+                    np.asarray([py]),
+                    peer_radius,
+                    subpix=5,
+                )[0][0])
+                # SEP's finite subpixel quadrature changes the nominal circle
+                # area slightly with detector phase. A difference below one
+                # native pixel is sampling, not different sky support.
+                if not np.isclose(peer_area, target_area, rtol=0.0, atol=1.0):
+                    common_support = False
+                    break
+                adjusted_peer = other_data + offset
+                peer_level = float(np.median(adjusted_peer[other_valid]))
+                peer_sum = sep.sum_circle(
+                    np.ascontiguousarray(adjusted_peer - peer_level, dtype=np.float64),
+                    np.asarray([px]),
+                    np.asarray([py]),
+                    peer_radius,
+                    subpix=5,
+                )[0][0]
+                peer_sums.append(float(peer_sum))
+            if common_support and len(peer_sums) >= min_references:
+                aperture_candidate[cy, cx] = (
+                    target_sum - max(peer_sums)
+                ) > threshold * float(noise[cy, cx])
         cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
         masks.append(cr)

@@ -208,6 +208,9 @@ def detect_sources(
         pixel_scale_arcsec = float(np.sqrt(np.prod(np.abs(scales_arcsec))))
         radius_arcsec = float(getattr(config, 'CATALOG_APERTURE_RADIUS_ARCSEC',
                                       4.0 * config.PIXEL_SCALE))
+        annulus_inner_arcsec = 1.5 * radius_arcsec
+        annulus_outer_arcsec = 2.5 * radius_arcsec
+        aperture_subpix = 5
         radius_px = radius_arcsec / pixel_scale_arcsec
         # Detection filtering is deliberately not used for photometry: its
         # pixel-sized kernels change their angular scale with SR.  Measure the
@@ -219,8 +222,9 @@ def detect_sources(
             np.asarray(t['x'], dtype=float),
             np.asarray(t['y'], dtype=float),
             radius_px,
-            bkgann=(1.5 * radius_px, 2.5 * radius_px),
-            subpix=5,
+            bkgann=(annulus_inner_arcsec / pixel_scale_arcsec,
+                    annulus_outer_arcsec / pixel_scale_arcsec),
+            subpix=aperture_subpix,
         )
         area_factor = _scene_sample_to_integrated_jy_factor(wcs)
         aperture_flux_jy = np.asarray(aperture_flux, dtype=float) * area_factor
@@ -231,6 +235,9 @@ def detect_sources(
         t['flux'] = aperture_flux_jy
         t['catalog_aperture_flux_jy'] = aperture_flux_jy.copy()
         t['catalog_aperture_radius_arcsec'] = np.full(len(t), radius_arcsec)
+        t['catalog_aperture_annulus_inner_arcsec'] = np.full(len(t), annulus_inner_arcsec)
+        t['catalog_aperture_annulus_outer_arcsec'] = np.full(len(t), annulus_outer_arcsec)
+        t['catalog_aperture_subpix'] = np.full(len(t), aperture_subpix, dtype=np.int16)
         t['catalog_aperture_flags'] = np.asarray(aperture_flags, dtype=np.int64)
         t['catalog_scene_to_native_area_factor'] = np.full(len(t), area_factor)
     return t
@@ -464,7 +471,23 @@ def reproject_to_grid(file_list, target_wcs, shape):
         d_proj = np.nan_to_num(d_proj)
         s_proj = np.nan_to_num(s_proj, nan=np.inf)
         s_proj[(d_proj == 0) & (s_proj == 0)] = np.inf
-        processed.append({'data': d_proj, 'sigma': s_proj, 'raw_wcs': raw['wcs'], 'corrected_wcs': wcs_use, 'filename': raw['filename'], 'mjd': raw['mjd'], 'file_info': f})
+        processed.append({
+            'data': d_proj,
+            'sigma': s_proj,
+            'raw_wcs': raw['wcs'],
+            'corrected_wcs': wcs_use,
+            'native_shape': tuple(d_jy.shape),
+            'native_valid_mask': (
+                np.isfinite(d_jy)
+                & np.isfinite(s_jy)
+                & (s_jy > 0.0)
+            ),
+            'is_full_array': bool(raw.get('is_full_array', False)),
+            'channel': f.get('channel', config.CHANNEL.lower()),
+            'filename': raw['filename'],
+            'mjd': raw['mjd'],
+            'file_info': f,
+        })
     return processed
 
 def create_median_stack(data_cube):

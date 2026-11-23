@@ -9,6 +9,7 @@ import os
 import warnings
 
 import numpy as np
+import sep
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.utils.exceptions import AstropyWarning
@@ -63,6 +64,125 @@ def _native_renderer_aperture_fraction(
     return fraction
 
 
+def _source_has_native_fit_support(
+    source: SkyCoord,
+    cutouts: list[dict],
+    channel: str,
+) -> bool:
+    """Return whether a catalog source contributes to any valid fit pixel.
+
+    The test uses the same detector-integrated point renderer and fit masks as
+    the solve. This avoids angular-distance heuristics for distorted or cropped
+    detector footprints.
+    """
+    for entry in cutouts:
+        native_shape = tuple(np.asarray(entry['data']).shape)
+        response = solver.native_point_source_column(
+            entry['wcs'],
+            entry['wcs'],
+            native_shape,
+            native_shape,
+            channel,
+            float(source.ra.deg),
+            float(source.dec.deg),
+            is_full_array=bool(entry.get('is_full_array', False)),
+        ).reshape(native_shape)
+        valid = solver.valid_fit_mask(entry)
+        supported = np.asarray(response, dtype=float)[valid]
+        if (
+            supported.size
+            and np.isfinite(supported).all()
+            and float(np.sum(np.abs(supported))) > np.finfo(float).eps
+        ):
+            return True
+    return False
+
+
+def _catalog_measurement_aperture_fraction(
+    row,
+    source: SkyCoord,
+    catalog_frames: list[dict],
+    catalog_wcs,
+    catalog_shape: tuple[int, int],
+    channel: str,
+) -> float:
+    """Apply the catalog's measurement operator to a unit rendered source.
+
+    Unit sources are rendered on the original native template BCDs, masked by
+    their measurement support, reprojected and median-combined like the deep
+    template, then measured with the recorded aperture, annulus and subpixel
+    settings. The result is independent of subsequent fit-stamp cropping.
+    """
+    if not catalog_frames:
+        raise ValueError('No template frames are available for catalog calibration')
+    responses: list[np.ndarray] = []
+    for entry in catalog_frames:
+        native_shape = tuple(entry.get('native_shape', ()))
+        if len(native_shape) != 2 or min(native_shape) <= 0:
+            raise ValueError('Catalog calibration frame lacks its native shape')
+        native_wcs = entry.get('raw_wcs')
+        if native_wcs is None:
+            raise ValueError('Catalog calibration frame lacks its native WCS')
+        response = solver.native_point_source_column(
+            catalog_wcs,
+            native_wcs,
+            catalog_shape,
+            native_shape,
+            channel,
+            float(source.ra.deg),
+            float(source.dec.deg),
+            is_full_array=bool(entry.get('is_full_array', False)),
+        ).reshape(native_shape)
+        native_valid = np.asarray(
+            entry.get('native_valid_mask', np.ones(native_shape, dtype=bool)),
+            dtype=bool,
+        )
+        if native_valid.shape != native_shape:
+            raise ValueError('Catalog calibration mask shape does not match native data')
+        projected, footprint = reproject_interp(
+            (np.where(native_valid, response, np.nan), native_wcs),
+            catalog_wcs,
+            shape_out=tuple(catalog_shape),
+        )
+        projected = np.asarray(projected, dtype=float)
+        projected[(~np.isfinite(footprint)) | (footprint <= 0.0)] = np.nan
+        projected[projected == 0.0] = np.nan
+        responses.append(projected)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        catalog_response = np.nanmedian(np.asarray(responses), axis=0)
+    catalog_response = np.nan_to_num(
+        catalog_response,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+
+    pixel_scale_arcsec = (
+        float(np.sqrt(abs(np.linalg.det(catalog_wcs.pixel_scale_matrix)))) * 3600.0
+    )
+    if not np.isfinite(pixel_scale_arcsec) or pixel_scale_arcsec <= 0.0:
+        raise ValueError('Catalog WCS has no finite positive pixel scale')
+    measured, _, _ = sep.sum_circle(
+        np.ascontiguousarray(catalog_response, dtype=np.float64),
+        np.asarray([float(row['x'])]),
+        np.asarray([float(row['y'])]),
+        float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec,
+        bkgann=(
+            float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
+            float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
+        ),
+        subpix=int(row['catalog_aperture_subpix']),
+    )
+    fraction = (
+        float(measured[0])
+        * preprocessing._scene_sample_to_integrated_jy_factor(catalog_wcs)
+    )
+    if not np.isfinite(fraction) or fraction <= np.finfo(float).eps:
+        raise ValueError('Catalog measurement contains no finite renderer response')
+    return fraction
+
+
 def _catalog_prior_flux_jy(
     row,
     source: SkyCoord,
@@ -70,17 +190,48 @@ def _catalog_prior_flux_jy(
     scene_wcs,
     scene_shape: tuple[int, int],
     channel: str,
+    *,
+    catalog_frames: list[dict] | None = None,
+    catalog_wcs=None,
+    catalog_shape: tuple[int, int] | None = None,
 ) -> tuple[float, float]:
-    """Convert a catalog aperture measurement to renderer-integrated Jy."""
+    """Convert a catalog aperture measurement to renderer-integrated Jy.
+
+    Production callers supply the original catalog measurement geometry. The
+    native-stamp fallback supports older programmatic catalogs without complete
+    aperture provenance, but cannot claim crop-independent calibration.
+    """
     aperture_flux = float(row['catalog_aperture_flux_jy']) if (
         'catalog_aperture_flux_jy' in row.colnames
     ) else float(row['flux'])
     radius_arcsec = float(row['catalog_aperture_radius_arcsec']) if (
         'catalog_aperture_radius_arcsec' in row.colnames
     ) else float(getattr(config, 'CATALOG_APERTURE_RADIUS_ARCSEC', 4.0 * config.PIXEL_SCALE))
-    fraction = _native_renderer_aperture_fraction(
-        source, cutouts, scene_wcs, scene_shape, channel, radius_arcsec,
-    )
+    provenance = {
+        'x',
+        'y',
+        'catalog_aperture_annulus_inner_arcsec',
+        'catalog_aperture_annulus_outer_arcsec',
+        'catalog_aperture_subpix',
+    }
+    if (
+        catalog_frames is not None
+        and catalog_wcs is not None
+        and catalog_shape is not None
+        and provenance.issubset(set(row.colnames))
+    ):
+        fraction = _catalog_measurement_aperture_fraction(
+            row,
+            source,
+            catalog_frames,
+            catalog_wcs,
+            tuple(catalog_shape),
+            channel,
+        )
+    else:
+        fraction = _native_renderer_aperture_fraction(
+            source, cutouts, scene_wcs, scene_shape, channel, radius_arcsec,
+        )
     return aperture_flux / fraction, fraction
 
 
@@ -235,13 +386,15 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     if raw_stars_table is not None:
         for i, row in enumerate(raw_stars_table):
             sc = SkyCoord(row['ra'], row['dec'], unit='deg')
+            if fit_on_native and not _source_has_native_fit_support(sc, cutouts, chan_str):
+                continue
             flux_val, aperture_fraction = _catalog_prior_flux_jy(
                 row, sc, cutouts, scene_wcs, scene_shape, chan_str,
+                catalog_frames=processed_tpl,
+                catalog_wcs=mosaic_wcs,
+                catalog_shape=mosaic_shape,
             )
             dist = sc.separation(target).arcsec
-            if fit_on_native and dist > 40.0:
-                # Keep only stars near the analysis window for native stamps.
-                continue
             print(f"   {i:<5} {dist:<10.3f} {flux_val:<12.4e} Solver (all in joint fit)")
             solver_stars.append(sc)
             solver_init_fluxes.append(flux_val)
