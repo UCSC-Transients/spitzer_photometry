@@ -469,3 +469,64 @@ def test_multiframe_memory_guard_rejects_before_scene_allocation(monkeypatch):
                 scene_wcs,
                 1,
             )
+
+
+@pytest.mark.parametrize(
+    ("native_shape", "scene_shape", "star_count"),
+    [((40, 60), (5, 7), 17), ((15, 21), (9, 11), 3)],
+)
+def test_successor_scene_allocation_has_no_previous_star_arrays(
+    native_shape,
+    scene_shape,
+    star_count,
+):
+    native_wcs = _wcs(max(native_shape)).slice((
+        slice(0, native_shape[0]), slice(0, native_shape[1]),
+    ))
+    scene_wcs = _wcs(max(scene_shape)).slice((
+        slice(0, scene_shape[0]), slice(0, scene_shape[1]),
+    ))
+    frames = []
+    for index in range(2):
+        entry = _frame(native_wcs.deepcopy(), max(native_shape), index)
+        entry["data"] = np.full(native_shape, 1.0e-3)
+        entry["sigma"] = np.full(native_shape, 1.0e-6)
+        frames.append(entry)
+    stars = [
+        SkyCoord(
+            *native_wcs.pixel_to_world_values(
+                float(2 + (index * 3) % max(3, native_shape[1] - 4)),
+                float(2 + (index * 5) % max(3, native_shape[0] - 4)),
+            ),
+            unit="deg",
+        )
+        for index in range(star_count)
+    ]
+    original = solver.frame_design_matrix
+    retained_stack = []
+
+    def traced(*args, **kwargs):
+        current = inspect.currentframe().f_back
+        while current is not None and current.f_code.co_name != "build_system":
+            current = current.f_back
+        if current is not None:
+            retained_stack.append("S" in current.f_locals)
+        return original(*args, **kwargs)
+
+    with native_fit_campaign._temporary_config(_memory_options()), patch.object(
+        solver, "load_prf", return_value=_test_prf(),
+    ), patch.object(solver, "frame_design_matrix", side_effect=traced):
+        result = solver.run_gls_solve(
+            frames,
+            stars,
+            np.zeros(star_count),
+            {},
+            (1.0, 1.0e-7),
+            np.zeros(scene_shape),
+            scene_wcs,
+            1,
+        )
+
+    assert retained_stack == [False, False]
+    assert np.isfinite(result["gp_scene"]).all()
+    assert np.isfinite(result["star_fluxes"]).all()
