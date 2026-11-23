@@ -124,6 +124,7 @@ def detect_sources(
     mask_nucleus=True,
     *,
     integrated_jy_catalog=False,
+    measurement_mask=None,
 ):
     """Detect sources and optionally measure fixed-aperture integrated-Jy flux.
 
@@ -222,6 +223,11 @@ def detect_sources(
             np.asarray(t['x'], dtype=float),
             np.asarray(t['y'], dtype=float),
             radius_px,
+            mask=(
+                ~np.asarray(measurement_mask, dtype=bool)
+                if measurement_mask is not None
+                else None
+            ),
             bkgann=(annulus_inner_arcsec / pixel_scale_arcsec,
                     annulus_outer_arcsec / pixel_scale_arcsec),
             subpix=aperture_subpix,
@@ -328,7 +334,13 @@ def get_or_create_source_catalog(file_list):
         return cat_dict
     return {}
 
-def update_catalog_with_template(deep_template, wcs, template_name='deep_template'):
+def update_catalog_with_template(
+    deep_template,
+    wcs,
+    template_name='deep_template',
+    *,
+    measurement_mask=None,
+):
     print("Updating Catalog with Deep Template sources...")
     t = detect_sources(
         deep_template,
@@ -337,6 +349,7 @@ def update_catalog_with_template(deep_template, wcs, template_name='deep_templat
         is_template=True,
         mask_nucleus=True,
         integrated_jy_catalog=True,
+        measurement_mask=measurement_mask,
     )
     if t is not None:
         t.add_column(Column([template_name] * len(t), name='filename', dtype='U'))
@@ -455,6 +468,39 @@ def define_mosaic_wcs(file_list, target_coord):
     w_mosaic.wcs.pc = np.eye(2)
     return w_mosaic, (n_h, n_w)
 
+
+def reproject_valid_native_samples(
+    values: np.ndarray,
+    valid_mask: np.ndarray,
+    source_wcs: WCS,
+    target_wcs: WCS,
+    shape: tuple[int, int],
+    *,
+    return_support: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """Reproject native samples while preserving their measurement support.
+
+    ``valid_mask`` is applied before interpolation so a finite science value
+    whose uncertainty/mask is invalid cannot contribute to a catalog stack.
+    The catalog unit-response calibration calls this same helper, ensuring its
+    mask, interpolation support, and zero-fill convention match the measured
+    template image.
+    """
+    native = np.asarray(values, dtype=float)
+    valid = np.asarray(valid_mask, dtype=bool)
+    if native.shape != valid.shape:
+        raise ValueError('Native values and validity mask must have the same shape')
+    projected, footprint = reproject_interp(
+        (np.where(valid, native, np.nan), source_wcs),
+        target_wcs,
+        shape_out=tuple(shape),
+    )
+    supported = np.isfinite(footprint) & (footprint > 0.0)
+    projected = np.where(supported & np.isfinite(projected), projected, 0.0)
+    if return_support:
+        return projected, supported
+    return projected
+
 def reproject_to_grid(file_list, target_wcs, shape):
     processed = []
     h, w = shape
@@ -464,24 +510,36 @@ def reproject_to_grid(file_list, target_wcs, shape):
         d_jy = raw['data'] * config.MJY_SR_TO_JY
         s_jy = raw['sigma'] * config.MJY_SR_TO_JY
         wcs_use = f.get('corrected_wcs', raw['wcs'])
+        measurement_wcs = wcs_use.deepcopy()
+        measurement_wcs._detector_wcs = raw['wcs'].deepcopy()
+        native_valid = (
+            np.isfinite(d_jy)
+            & np.isfinite(s_jy)
+            & (s_jy > 0.0)
+        )
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            d_proj, _ = reproject_interp((d_jy, wcs_use), target_wcs, shape_out=(h, w))
-            s_proj, _ = reproject_interp((s_jy, wcs_use), target_wcs, shape_out=(h, w))
-        d_proj = np.nan_to_num(d_proj)
-        s_proj = np.nan_to_num(s_proj, nan=np.inf)
+            d_proj, projected_valid = reproject_valid_native_samples(
+                d_jy,
+                native_valid,
+                measurement_wcs,
+                target_wcs,
+                (h, w),
+                return_support=True,
+            )
+            s_proj = reproject_valid_native_samples(
+                s_jy, native_valid, measurement_wcs, target_wcs, (h, w),
+            )
+        s_proj = np.where(s_proj > 0.0, s_proj, np.inf)
         s_proj[(d_proj == 0) & (s_proj == 0)] = np.inf
         processed.append({
             'data': d_proj,
             'sigma': s_proj,
             'raw_wcs': raw['wcs'],
-            'corrected_wcs': wcs_use,
+            'corrected_wcs': measurement_wcs,
             'native_shape': tuple(d_jy.shape),
-            'native_valid_mask': (
-                np.isfinite(d_jy)
-                & np.isfinite(s_jy)
-                & (s_jy > 0.0)
-            ),
+            'native_valid_mask': native_valid,
+            'projected_valid_mask': projected_valid,
             'is_full_array': bool(raw.get('is_full_array', False)),
             'channel': f.get('channel', config.CHANNEL.lower()),
             'filename': raw['filename'],

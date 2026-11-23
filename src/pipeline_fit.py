@@ -116,11 +116,12 @@ def _catalog_measurement_aperture_fraction(
     if not catalog_frames:
         raise ValueError('No template frames are available for catalog calibration')
     responses: list[np.ndarray] = []
+    supports: list[np.ndarray] = []
     for entry in catalog_frames:
         native_shape = tuple(entry.get('native_shape', ()))
         if len(native_shape) != 2 or min(native_shape) <= 0:
             raise ValueError('Catalog calibration frame lacks its native shape')
-        native_wcs = entry.get('raw_wcs')
+        native_wcs = entry.get('corrected_wcs', entry.get('raw_wcs'))
         if native_wcs is None:
             raise ValueError('Catalog calibration frame lacks its native WCS')
         response = solver.native_point_source_column(
@@ -139,24 +140,18 @@ def _catalog_measurement_aperture_fraction(
         )
         if native_valid.shape != native_shape:
             raise ValueError('Catalog calibration mask shape does not match native data')
-        projected, footprint = reproject_interp(
-            (np.where(native_valid, response, np.nan), native_wcs),
+        projected, support = preprocessing.reproject_valid_native_samples(
+            response,
+            native_valid,
+            native_wcs,
             catalog_wcs,
-            shape_out=tuple(catalog_shape),
+            tuple(catalog_shape),
+            return_support=True,
         )
-        projected = np.asarray(projected, dtype=float)
-        projected[(~np.isfinite(footprint)) | (footprint <= 0.0)] = np.nan
-        projected[projected == 0.0] = np.nan
         responses.append(projected)
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)
-        catalog_response = np.nanmedian(np.asarray(responses), axis=0)
-    catalog_response = np.nan_to_num(
-        catalog_response,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0,
-    )
+        supports.append(support)
+    catalog_response, _ = preprocessing.create_median_stack(np.asarray(responses))
+    catalog_support = np.any(np.asarray(supports, dtype=bool), axis=0)
 
     pixel_scale_arcsec = (
         float(np.sqrt(abs(np.linalg.det(catalog_wcs.pixel_scale_matrix)))) * 3600.0
@@ -168,6 +163,7 @@ def _catalog_measurement_aperture_fraction(
         np.asarray([float(row['x'])]),
         np.asarray([float(row['y'])]),
         float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec,
+        mask=~catalog_support,
         bkgann=(
             float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
             float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
@@ -286,8 +282,14 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
     med_stack, mad_stack = preprocessing.create_median_stack(tpl_cube)
 
     print("\n[Step 2b] Detecting Sources on Deep Template...")
+    template_measurement_mask = np.any(np.asarray([
+        p.get('projected_valid_mask', np.isfinite(p['sigma'])) for p in processed_tpl
+    ], dtype=bool), axis=0)
     template_stars_table = preprocessing.update_catalog_with_template(
-        med_stack, mosaic_wcs, 'deep_template',
+        med_stack,
+        mosaic_wcs,
+        'deep_template',
+        measurement_mask=template_measurement_mask,
     )
 
     print("\n[Step 3] Loading Full Source Catalog for Alignment...")
@@ -345,10 +347,31 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         [(target.ra.deg, target.dec.deg)], int(config.NATIVE_SCENE_PAD_PX))
 
     print("\n[Step 8] Final CR Pass on Cutouts...")
-    tpl_cutouts = [reproject_interp((c['data'], c['wcs']), scene_wcs, shape_out=scene_shape)[0]
-                   for c in cutouts if c['is_template']]
+    catalog_cutout_frames = []
+    tpl_cutouts = []
+    for c in cutouts:
+        if not c['is_template']:
+            continue
+        valid = solver.valid_fit_mask(c)
+        projected, support = preprocessing.reproject_valid_native_samples(
+            c['data'],
+            valid,
+            c['wcs'],
+            scene_wcs,
+            scene_shape,
+            return_support=True,
+        )
+        tpl_cutouts.append(projected)
+        catalog_cutout_frames.append({
+            'raw_wcs': c['wcs'],
+            'corrected_wcs': c['wcs'],
+            'native_shape': tuple(np.asarray(c['data']).shape),
+            'native_valid_mask': valid.copy(),
+            'projected_valid_mask': support,
+            'is_full_array': bool(c.get('is_full_array', False)),
+        })
     if tpl_cutouts:
-        median_stamp = np.nanmedian(np.array(tpl_cutouts), axis=0)
+        median_stamp, _ = preprocessing.create_median_stack(np.asarray(tpl_cutouts))
     else:
         median_stamp = np.zeros(scene_shape)
 
@@ -373,7 +396,19 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
             is_template=True,
             mask_nucleus=False,
             integrated_jy_catalog=True,
+            measurement_mask=np.any(np.asarray([
+                entry['projected_valid_mask'] for entry in catalog_cutout_frames
+            ], dtype=bool), axis=0),
         )
+
+    if fit_on_native:
+        catalog_frames = processed_tpl
+        catalog_wcs = mosaic_wcs
+        catalog_shape = mosaic_shape
+    else:
+        catalog_frames = catalog_cutout_frames
+        catalog_wcs = scene_wcs
+        catalog_shape = scene_shape
 
     solver_stars = []
     solver_init_fluxes = []
@@ -390,9 +425,9 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
                 continue
             flux_val, aperture_fraction = _catalog_prior_flux_jy(
                 row, sc, cutouts, scene_wcs, scene_shape, chan_str,
-                catalog_frames=processed_tpl,
-                catalog_wcs=mosaic_wcs,
-                catalog_shape=mosaic_shape,
+                catalog_frames=catalog_frames,
+                catalog_wcs=catalog_wcs,
+                catalog_shape=catalog_shape,
             )
             dist = sc.separation(target).arcsec
             print(f"   {i:<5} {dist:<10.3f} {flux_val:<12.4e} Solver (all in joint fit)")
