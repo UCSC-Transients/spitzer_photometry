@@ -460,35 +460,58 @@ def _native_aperture_with_planar_background(
     # remove only samples that are themselves threshold-level outliers from
     # the local affine sky. This changes neither the input errors nor the
     # candidate-pixel threshold.
-    keep = np.ones(annulus_data.size, dtype=bool)
-    background_covariance = None
-    background_coefficients = None
     clip_threshold = float(max(0.0, clip_sigma))
-    for _ in range(4):
-        if np.count_nonzero(keep) < 6:
-            return None
-        kept_design = design[keep]
-        kept_sigma = annulus_sigma[keep]
-        inverse_variance = 1.0 / np.square(kept_sigma)
-        normal = kept_design.T @ (inverse_variance[:, None] * kept_design)
-        try:
-            background_covariance = np.linalg.inv(normal)
-        except np.linalg.LinAlgError:
-            return None
-        background_coefficients = background_covariance @ (
-            kept_design.T @ (inverse_variance * annulus_data[keep])
-        )
-        normalized_residual = np.abs(
+    # Starting an ordinary least-squares clip with every annulus pixel lets one
+    # arbitrarily large CR drag the plane far enough that the clean annulus is
+    # rejected instead.  Bounded IRLS starts from the annulus median and limits
+    # every sample's leverage before the final covariance is formed from the
+    # unchanged measurement errors.
+    background_coefficients = np.asarray([
+        float(np.median(annulus_data)), 0.0, 0.0,
+    ])
+    for _ in range(8):
+        normalized_residual = (
             annulus_data - design @ background_coefficients
         ) / annulus_sigma
-        updated = np.isfinite(normalized_residual) & (
-            normalized_residual <= clip_threshold
-        )
-        if np.array_equal(updated, keep):
+        absolute_residual = np.abs(normalized_residual)
+        robust_weight = np.ones_like(absolute_residual)
+        large = absolute_residual > clip_threshold
+        robust_weight[large] = clip_threshold / absolute_residual[large]
+        inverse_variance = robust_weight / np.square(annulus_sigma)
+        normal = design.T @ (inverse_variance[:, None] * design)
+        try:
+            updated_coefficients = np.linalg.solve(
+                normal,
+                design.T @ (inverse_variance * annulus_data),
+            )
+        except np.linalg.LinAlgError:
+            return None
+        if np.allclose(
+            updated_coefficients, background_coefficients,
+            rtol=1.0e-10, atol=1.0e-15,
+        ):
+            background_coefficients = updated_coefficients
             break
-        keep = updated
-    if background_covariance is None or background_coefficients is None:
+        background_coefficients = updated_coefficients
+    normalized_residual = np.abs(
+        annulus_data - design @ background_coefficients
+    ) / annulus_sigma
+    keep = np.isfinite(normalized_residual) & (
+        normalized_residual <= clip_threshold
+    )
+    if np.count_nonzero(keep) < 6:
         return None
+    kept_design = design[keep]
+    kept_sigma = annulus_sigma[keep]
+    inverse_variance = 1.0 / np.square(kept_sigma)
+    normal = kept_design.T @ (inverse_variance[:, None] * kept_design)
+    try:
+        background_covariance = np.linalg.inv(normal)
+    except np.linalg.LinAlgError:
+        return None
+    background_coefficients = background_covariance @ (
+        kept_design.T @ (inverse_variance * annulus_data[keep])
+    )
 
     weights = aperture_weights[aperture_pixels]
     aperture_data = data[y0:y1, x0:x1][aperture_pixels]
@@ -535,6 +558,27 @@ def _native_position_is_near_local_peak(state: dict, x: float, y: float) -> bool
     # Strict prominence matters here: a flat plateau is not evidence for a
     # positive point source, and is therefore never grounds for abstention.
     return bool(data[peak_y, peak_x] > np.max(peak_neighborhood))
+
+
+def _native_local_peak_position(
+    state: dict,
+    x: float,
+    y: float,
+) -> tuple[int, int] | None:
+    """Return the valid local-maximum pixel nearest a candidate position."""
+    ix = int(np.rint(x))
+    iy = int(np.rint(y))
+    data = state['data']
+    valid = state['valid']
+    if iy < 0 or ix < 0 or iy >= data.shape[0] or ix >= data.shape[1]:
+        return None
+    y0, y1 = max(0, iy - 1), min(data.shape[0], iy + 2)
+    x0, x1 = max(0, ix - 1), min(data.shape[1], ix + 2)
+    nearby = np.where(valid[y0:y1, x0:x1], data[y0:y1, x0:x1], -np.inf)
+    if not np.isfinite(nearby).any():
+        return None
+    peak_offset = np.unravel_index(int(np.argmax(nearby)), nearby.shape)
+    return x0 + int(peak_offset[1]), y0 + int(peak_offset[0])
 
 
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
@@ -612,40 +656,54 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         ))
         aperture_candidate = np.zeros(data.shape, dtype=bool)
         candidate_y, candidate_x = np.nonzero(pixel_candidate)
+        candidate_score = np.where(
+            pixel_candidate,
+            (data - reference) / noise,
+            -np.inf,
+        )
         target_scale_arcsec = state['scale_arcsec']
         aperture_radius_arcsec = radius * target_scale_arcsec
-        if candidate_x.size:
-            candidate_ra, candidate_dec = c['wcs'].pixel_to_world_values(
-                candidate_x.astype(float), candidate_y.astype(float),
+        peak_groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        peak_excess: dict[tuple[int, int], bool] = {}
+        for cy, cx in zip(candidate_y.tolist(), candidate_x.tolist()):
+            peak = _native_local_peak_position(state, float(cx), float(cy))
+            if peak is None:
+                continue
+            peak_groups.setdefault(peak, []).append((cy, cx))
+        unique_peaks = list(peak_groups)
+        if unique_peaks:
+            peak_ra, peak_dec = c['wcs'].pixel_to_world_values(
+                np.asarray([peak[0] for peak in unique_peaks], dtype=float),
+                np.asarray([peak[1] for peak in unique_peaks], dtype=float),
             )
         else:
-            candidate_ra = candidate_dec = np.zeros(0, dtype=float)
-        for cy, cx, ra, dec in zip(
-            candidate_y.tolist(),
-            candidate_x.tolist(),
-            np.asarray(candidate_ra, dtype=float).tolist(),
-            np.asarray(candidate_dec, dtype=float).tolist(),
+            peak_ra = peak_dec = np.zeros(0, dtype=float)
+        for peak, ra, dec in zip(
+            unique_peaks,
+            np.asarray(peak_ra, dtype=float).tolist(),
+            np.asarray(peak_dec, dtype=float).tolist(),
         ):
+            peak_x, peak_y = peak
             target_measurement = _native_aperture_with_planar_background(
                 state,
-                float(cx),
-                float(cy),
+                float(peak_x),
+                float(peak_y),
                 radius,
                 background_exclude=pixel_candidate,
                 clip_sigma=threshold,
             )
             if target_measurement is None:
+                peak_excess[peak] = False
                 continue
             target_sum_value, target_error_value, target_area_value = target_measurement
             peer_sums: list[float] = []
             peer_variances: list[float] = []
-            peer_peak_matches = 0
             sampling_differs = False
             support_clipped = (
-                cx - radius < 0.0
-                or cx + radius > data.shape[1] - 1.0
-                or cy - radius < 0.0
-                or cy + radius > data.shape[0] - 1.0
+                peak_x - radius < 0.0
+                or peak_x + radius > data.shape[1] - 1.0
+                or peak_y - radius < 0.0
+                or peak_y + radius > data.shape[0] - 1.0
             )
             common_support = True
             for peer_index in peers:
@@ -681,11 +739,8 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     break
                 peer_sums.append(peer_sum_value)
                 peer_variances.append(peer_error_value**2)
-                peer_peak_matches += int(
-                    _native_position_is_near_local_peak(other_state, px, py)
-                )
                 phase_delta = np.mod(
-                    np.asarray([px - cx, py - cy], dtype=float) + 0.5, 1.0,
+                    np.asarray([px - peak_x, py - peak_y], dtype=float) + 0.5, 1.0,
                 ) - 0.5
                 target_linear = np.asarray(c['wcs'].pixel_scale_matrix, dtype=float)
                 peer_linear = np.asarray(other['wcs'].pixel_scale_matrix, dtype=float)
@@ -697,25 +752,44 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 )
             if common_support and len(peer_sums) >= min_references:
                 if sampling_differs and support_clipped:
+                    peak_excess[peak] = False
                     continue
                 weights = 1.0 / np.asarray(peer_variances, dtype=float)
                 peer_reference = float(np.average(peer_sums, weights=weights))
                 peer_reference_error = float(np.sqrt(1.0 / np.sum(weights)))
-                # A highly significant static source in the peer aperture makes
-                # a native-pixel outlier sampling-ambiguous. Conservatively
-                # abstain rather than calling phase/noise structure a CR.
-                if (
-                    sampling_differs
-                    and peer_reference > threshold * peer_reference_error
-                    and peer_peak_matches >= 1
-                ):
-                    continue
                 comparison_error = float(np.sqrt(
                     target_error_value**2 + peer_reference_error**2
                 ))
-                aperture_candidate[cy, cx] = (
+                peak_excess[peak] = (
                     target_sum_value - peer_reference
                 ) > aperture_sigma * comparison_error
+            else:
+                peak_excess[peak] = False
+        # One aperture excess can make several neighboring interpolation
+        # residuals pass.  Assign that excess only to the strongest native
+        # candidate associated with the same local source peak.
+        for peak, candidates in peak_groups.items():
+            if not peak_excess.get(peak, False):
+                continue
+            ranked = sorted(
+                candidates,
+                key=lambda pos: candidate_score[pos],
+                reverse=True,
+            )
+            # A detector-response change can produce a symmetric group of
+            # equally strong positive core residuals while conserving source
+            # flux outside the fixed comparison aperture.  A CR is localized:
+            # require a strictly prominent native-pixel excess rather than a
+            # numerically flat maximum.  The 8-sigma pixel and 1.9-sigma
+            # aperture thresholds remain unchanged.
+            if (
+                len(ranked) > 1
+                and candidate_score[ranked[0]] - candidate_score[ranked[1]]
+                <= 1.0e-8 * max(1.0, abs(candidate_score[ranked[0]]))
+            ):
+                continue
+            cy, cx = ranked[0]
+            aperture_candidate[cy, cx] = True
         cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
         masks.append(cr)

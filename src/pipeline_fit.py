@@ -117,6 +117,7 @@ def _catalog_measurement_aperture_fraction(
     responses: list[np.ndarray] = []
     supports: list[np.ndarray] = []
     projected_data: list[np.ndarray] = []
+    projected_sigmas: list[np.ndarray] = []
     for entry in catalog_frames:
         native_shape = tuple(entry.get('native_shape', ()))
         if len(native_shape) != 2 or min(native_shape) <= 0:
@@ -148,77 +149,144 @@ def _catalog_measurement_aperture_fraction(
             tuple(catalog_shape),
             return_support=True,
         )
-        responses.append(projected)
-        supports.append(support)
         if 'data' in entry:
             data = np.asarray(entry['data'], dtype=float)
             if data.shape != tuple(catalog_shape):
                 raise ValueError('Catalog calibration data shape does not match its grid')
+            projected_support = np.asarray(
+                entry.get('projected_valid_mask', support), dtype=bool,
+            )
+            if projected_support.shape != tuple(catalog_shape):
+                raise ValueError('Catalog projected mask shape does not match its grid')
+            support = support & projected_support & np.isfinite(data)
+            if 'sigma' in entry:
+                projected_sigma = np.asarray(entry['sigma'], dtype=float)
+                if projected_sigma.shape != tuple(catalog_shape):
+                    raise ValueError('Catalog projected error shape does not match its grid')
+                support &= np.isfinite(projected_sigma) & (projected_sigma > 0.0)
+                projected_sigmas.append(projected_sigma)
             projected_data.append(data)
-    catalog_response, _ = preprocessing.create_median_stack(np.asarray(responses))
-    catalog_support = np.any(np.asarray(supports, dtype=bool), axis=0)
+        responses.append(projected)
+        supports.append(support)
 
     pixel_scale_arcsec = (
         float(np.sqrt(abs(np.linalg.det(catalog_wcs.pixel_scale_matrix)))) * 3600.0
     )
     if not np.isfinite(pixel_scale_arcsec) or pixel_scale_arcsec <= 0.0:
         raise ValueError('Catalog WCS has no finite positive pixel scale')
-    measured, _, _ = sep.sum_circle(
-        np.ascontiguousarray(catalog_response, dtype=np.float64),
-        np.asarray([float(row['x'])]),
-        np.asarray([float(row['y'])]),
-        float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec,
-        mask=~catalog_support,
-        bkgann=(
-            float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
-            float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
-        ),
-        subpix=int(row['catalog_aperture_subpix']),
+    area_factor = preprocessing._scene_sample_to_integrated_jy_factor(catalog_wcs)
+    radius = float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec
+    annulus = (
+        float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
+        float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
     )
-    fraction = (
-        float(measured[0])
-        * preprocessing._scene_sample_to_integrated_jy_factor(catalog_wcs)
-    )
-    if not np.isfinite(fraction) or fraction <= np.finfo(float).eps:
-        raise ValueError('Catalog measurement contains no finite renderer response')
-
-    # Median stacking is nonlinear when frame backgrounds and detector PRFs
-    # differ: a background-free median response need not select the same frame
-    # as the data median. When the production projected frames are available,
-    # calibrate each through the identical support/reprojection/aperture
-    # operator and combine the resulting integrated-Jy estimates instead.
+    subpix = int(row['catalog_aperture_subpix'])
+    x = np.asarray([float(row['x'])])
+    y = np.asarray([float(row['y'])])
     calibrated_flux = None
     if len(projected_data) == len(responses):
-        frame_fluxes: list[float] = []
-        area_factor = preprocessing._scene_sample_to_integrated_jy_factor(catalog_wcs)
-        radius = float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec
-        annulus = (
-            float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
-            float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
+        data_cube = np.asarray(projected_data, dtype=float).copy()
+        response_cube = np.asarray(responses, dtype=float).copy()
+        support_cube = np.asarray(supports, dtype=bool)
+        yy, xx = np.indices(tuple(catalog_shape), dtype=float)
+        distance = np.hypot(xx - float(x[0]), yy - float(y[0]))
+        annulus_pixels = (distance >= annulus[0]) & (distance <= annulus[1])
+        for frame_index in range(data_cube.shape[0]):
+            valid_annulus = support_cube[frame_index] & annulus_pixels
+            if not np.any(valid_annulus):
+                raise ValueError('Catalog frame has no valid background annulus')
+            # Remove each frame's constant annulus level from both data and
+            # unit response.  For data = background + flux * response this is
+            # a matched linear operation, even when detector PRFs differ.
+            data_cube[frame_index] -= float(np.median(
+                data_cube[frame_index][valid_annulus],
+            ))
+            response_cube[frame_index] -= float(np.median(
+                response_cube[frame_index][valid_annulus],
+            ))
+        # Estimate a common positive source amplitude from source-dominated
+        # pixels, then reject only positive, threshold-level departures before
+        # applying the median selector.  This restores pixel-level CR
+        # rejection even when different PRFs reorder the clean frame values.
+        aperture_pixels = distance <= radius
+        ratio_samples: list[np.ndarray] = []
+        for frame_index in range(data_cube.shape[0]):
+            source_response = np.abs(response_cube[frame_index])
+            response_peak = float(np.max(
+                source_response[support_cube[frame_index] & aperture_pixels],
+                initial=0.0,
+            ))
+            ratio_support = (
+                support_cube[frame_index]
+                & aperture_pixels
+                & (response_cube[frame_index] > 1.0e-3 * response_peak)
+            )
+            if np.any(ratio_support):
+                ratio_samples.append(
+                    data_cube[frame_index][ratio_support]
+                    / response_cube[frame_index][ratio_support]
+                )
+        if not ratio_samples:
+            raise ValueError('Catalog frames contain no source-response samples')
+        robust_flux = float(np.median(np.concatenate(ratio_samples)))
+        if not np.isfinite(robust_flux) or robust_flux <= 0.0:
+            raise ValueError('Catalog frames provide no positive robust source flux')
+        if len(projected_sigmas) == len(responses):
+            sigma_cube = np.asarray(projected_sigmas, dtype=float)
+            positive_outlier = (
+                support_cube
+                & aperture_pixels[None, ...]
+                & ((data_cube - robust_flux * response_cube) > 8.0 * sigma_cube)
+            )
+            support_cube &= ~positive_outlier
+        sortable_data = np.where(support_cube, data_cube, np.inf)
+        order = np.argsort(sortable_data, axis=0, kind='stable')
+        valid_count = np.sum(support_cube, axis=0)
+        low_rank = np.maximum((valid_count - 1) // 2, 0)[None, ...]
+        high_rank = np.maximum(valid_count // 2, 0)[None, ...]
+        low_index = np.take_along_axis(order, low_rank, axis=0)
+        high_index = np.take_along_axis(order, high_rank, axis=0)
+        selected_data = 0.5 * (
+            np.take_along_axis(data_cube, low_index, axis=0)[0]
+            + np.take_along_axis(data_cube, high_index, axis=0)[0]
         )
-        subpix = int(row['catalog_aperture_subpix'])
-        x = np.asarray([float(row['x'])])
-        y = np.asarray([float(row['y'])])
-        for data, response, support in zip(projected_data, responses, supports):
-            mask = ~np.asarray(support, dtype=bool)
-            data_measurement = sep.sum_circle(
-                np.ascontiguousarray(data, dtype=np.float64), x, y, radius,
-                mask=mask, bkgann=annulus, subpix=subpix,
-            )[0][0] * area_factor
-            response_measurement = sep.sum_circle(
-                np.ascontiguousarray(response, dtype=np.float64), x, y, radius,
-                mask=mask, bkgann=annulus, subpix=subpix,
-            )[0][0] * area_factor
-            if (
-                np.isfinite(data_measurement)
-                and np.isfinite(response_measurement)
-                and response_measurement > np.finfo(float).eps
-            ):
-                frame_fluxes.append(float(data_measurement / response_measurement))
-        if frame_fluxes:
-            calibrated_flux = float(np.median(frame_fluxes))
-            if not np.isfinite(calibrated_flux) or calibrated_flux <= 0.0:
-                raise ValueError('Catalog frames provide no positive calibrated source flux')
+        selected_response = 0.5 * (
+            np.take_along_axis(response_cube, low_index, axis=0)[0]
+            + np.take_along_axis(response_cube, high_index, axis=0)[0]
+        )
+        catalog_support = valid_count > 0
+        selected_data = np.where(catalog_support, selected_data, 0.0)
+        selected_response = np.where(catalog_support, selected_response, 0.0)
+        data_measurement = sep.sum_circle(
+            np.ascontiguousarray(selected_data, dtype=np.float64),
+            x, y, radius, mask=~catalog_support, bkgann=annulus, subpix=subpix,
+        )[0][0] * area_factor
+        response_measurement = sep.sum_circle(
+            np.ascontiguousarray(selected_response, dtype=np.float64),
+            x, y, radius, mask=~catalog_support, bkgann=annulus, subpix=subpix,
+        )[0][0] * area_factor
+        fraction = float(response_measurement)
+        if (
+            not np.isfinite(data_measurement)
+            or not np.isfinite(fraction)
+            or fraction <= np.finfo(float).eps
+        ):
+            raise ValueError('Catalog frames provide no finite calibrated source flux')
+        calibrated_flux = float(data_measurement / fraction)
+        if not np.isfinite(calibrated_flux) or calibrated_flux <= 0.0:
+            raise ValueError('Catalog frames provide no positive calibrated source flux')
+    else:
+        catalog_response, _ = preprocessing.create_median_stack(
+            np.asarray(responses),
+        )
+        catalog_support = np.any(np.asarray(supports, dtype=bool), axis=0)
+        measured, _, _ = sep.sum_circle(
+            np.ascontiguousarray(catalog_response, dtype=np.float64),
+            x, y, radius, mask=~catalog_support, bkgann=annulus, subpix=subpix,
+        )
+        fraction = float(measured[0]) * area_factor
+        if not np.isfinite(fraction) or fraction <= np.finfo(float).eps:
+            raise ValueError('Catalog measurement contains no finite renderer response')
     return calibrated_flux, fraction
 
 

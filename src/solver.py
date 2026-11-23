@@ -2106,6 +2106,19 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                         Hloc[ibp, inp] += vnd
                         Hloc[inp, ibp] += vnd
 
+                # Python loop locals otherwise retain the preceding frame's
+                # individual star columns and stacked design while the next
+                # frame constructs its scene matrix.  They have already been
+                # reduced into Hloc/rhsloc, so release them before successor
+                # allocations rather than relying on an underestimated phase
+                # overlap in the preallocation guard.
+                if cols_s_native:
+                    del S
+                del cols_s
+                del cols_s_native
+                if n_stars > 0:
+                    del col_s
+
             if n_stars > 0:
                 star_diag = np.diag(Hloc[idx_stars:idx_star_end, idx_stars:idx_star_end])
                 avg_w = np.median(star_diag)
