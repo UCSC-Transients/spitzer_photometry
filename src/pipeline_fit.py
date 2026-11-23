@@ -104,7 +104,7 @@ def _catalog_measurement_aperture_fraction(
     catalog_wcs,
     catalog_shape: tuple[int, int],
     channel: str,
-) -> float:
+) -> tuple[float | None, float]:
     """Apply the catalog's measurement operator to a unit rendered source.
 
     Unit sources are rendered on the original native template BCDs, masked by
@@ -116,6 +116,7 @@ def _catalog_measurement_aperture_fraction(
         raise ValueError('No template frames are available for catalog calibration')
     responses: list[np.ndarray] = []
     supports: list[np.ndarray] = []
+    projected_data: list[np.ndarray] = []
     for entry in catalog_frames:
         native_shape = tuple(entry.get('native_shape', ()))
         if len(native_shape) != 2 or min(native_shape) <= 0:
@@ -149,6 +150,11 @@ def _catalog_measurement_aperture_fraction(
         )
         responses.append(projected)
         supports.append(support)
+        if 'data' in entry:
+            data = np.asarray(entry['data'], dtype=float)
+            if data.shape != tuple(catalog_shape):
+                raise ValueError('Catalog calibration data shape does not match its grid')
+            projected_data.append(data)
     catalog_response, _ = preprocessing.create_median_stack(np.asarray(responses))
     catalog_support = np.any(np.asarray(supports, dtype=bool), axis=0)
 
@@ -175,7 +181,45 @@ def _catalog_measurement_aperture_fraction(
     )
     if not np.isfinite(fraction) or fraction <= np.finfo(float).eps:
         raise ValueError('Catalog measurement contains no finite renderer response')
-    return fraction
+
+    # Median stacking is nonlinear when frame backgrounds and detector PRFs
+    # differ: a background-free median response need not select the same frame
+    # as the data median. When the production projected frames are available,
+    # calibrate each through the identical support/reprojection/aperture
+    # operator and combine the resulting integrated-Jy estimates instead.
+    calibrated_flux = None
+    if len(projected_data) == len(responses):
+        frame_fluxes: list[float] = []
+        area_factor = preprocessing._scene_sample_to_integrated_jy_factor(catalog_wcs)
+        radius = float(row['catalog_aperture_radius_arcsec']) / pixel_scale_arcsec
+        annulus = (
+            float(row['catalog_aperture_annulus_inner_arcsec']) / pixel_scale_arcsec,
+            float(row['catalog_aperture_annulus_outer_arcsec']) / pixel_scale_arcsec,
+        )
+        subpix = int(row['catalog_aperture_subpix'])
+        x = np.asarray([float(row['x'])])
+        y = np.asarray([float(row['y'])])
+        for data, response, support in zip(projected_data, responses, supports):
+            mask = ~np.asarray(support, dtype=bool)
+            data_measurement = sep.sum_circle(
+                np.ascontiguousarray(data, dtype=np.float64), x, y, radius,
+                mask=mask, bkgann=annulus, subpix=subpix,
+            )[0][0] * area_factor
+            response_measurement = sep.sum_circle(
+                np.ascontiguousarray(response, dtype=np.float64), x, y, radius,
+                mask=mask, bkgann=annulus, subpix=subpix,
+            )[0][0] * area_factor
+            if (
+                np.isfinite(data_measurement)
+                and np.isfinite(response_measurement)
+                and response_measurement > np.finfo(float).eps
+            ):
+                frame_fluxes.append(float(data_measurement / response_measurement))
+        if frame_fluxes:
+            calibrated_flux = float(np.median(frame_fluxes))
+            if not np.isfinite(calibrated_flux) or calibrated_flux <= 0.0:
+                raise ValueError('Catalog frames provide no positive calibrated source flux')
+    return calibrated_flux, fraction
 
 
 def _catalog_prior_flux_jy(
@@ -215,7 +259,7 @@ def _catalog_prior_flux_jy(
         and catalog_shape is not None
         and provenance.issubset(set(row.colnames))
     ):
-        fraction = _catalog_measurement_aperture_fraction(
+        calibrated_flux, fraction = _catalog_measurement_aperture_fraction(
             row,
             source,
             catalog_frames,
@@ -223,6 +267,8 @@ def _catalog_prior_flux_jy(
             tuple(catalog_shape),
             channel,
         )
+        if calibrated_flux is not None:
+            aperture_flux = calibrated_flux * fraction
     else:
         fraction = _native_renderer_aperture_fraction(
             source, cutouts, scene_wcs, scene_shape, channel, radius_arcsec,
@@ -365,6 +411,7 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
         )
         tpl_cutouts.append(projected)
         catalog_cutout_frames.append({
+            'data': projected,
             'raw_wcs': c['wcs'],
             'corrected_wcs': c['wcs'],
             'native_shape': tuple(np.asarray(c['data']).shape),

@@ -400,6 +400,7 @@ def _native_aperture_with_planar_background(
     *,
     subpix: int = 5,
     background_exclude: np.ndarray | None = None,
+    clip_sigma: float = 8.0,
 ) -> tuple[float, float, float] | None:
     """Measure one native aperture with a locally fitted affine background.
 
@@ -454,15 +455,40 @@ def _native_aperture_with_planar_background(
         dx[annulus],
         dy[annulus],
     ))
-    inverse_variance = 1.0 / np.square(annulus_sigma)
-    normal = design.T @ (inverse_variance[:, None] * design)
-    try:
-        background_covariance = np.linalg.inv(normal)
-    except np.linalg.LinAlgError:
+    # A CR in a peer annulus must not bias the comparison against a candidate
+    # in the target frame. Fit every target and peer annulus identically, and
+    # remove only samples that are themselves threshold-level outliers from
+    # the local affine sky. This changes neither the input errors nor the
+    # candidate-pixel threshold.
+    keep = np.ones(annulus_data.size, dtype=bool)
+    background_covariance = None
+    background_coefficients = None
+    clip_threshold = float(max(0.0, clip_sigma))
+    for _ in range(4):
+        if np.count_nonzero(keep) < 6:
+            return None
+        kept_design = design[keep]
+        kept_sigma = annulus_sigma[keep]
+        inverse_variance = 1.0 / np.square(kept_sigma)
+        normal = kept_design.T @ (inverse_variance[:, None] * kept_design)
+        try:
+            background_covariance = np.linalg.inv(normal)
+        except np.linalg.LinAlgError:
+            return None
+        background_coefficients = background_covariance @ (
+            kept_design.T @ (inverse_variance * annulus_data[keep])
+        )
+        normalized_residual = np.abs(
+            annulus_data - design @ background_coefficients
+        ) / annulus_sigma
+        updated = np.isfinite(normalized_residual) & (
+            normalized_residual <= clip_threshold
+        )
+        if np.array_equal(updated, keep):
+            break
+        keep = updated
+    if background_covariance is None or background_coefficients is None:
         return None
-    background_coefficients = background_covariance @ (
-        design.T @ (inverse_variance * annulus_data)
-    )
 
     weights = aperture_weights[aperture_pixels]
     aperture_data = data[y0:y1, x0:x1][aperture_pixels]
@@ -504,8 +530,11 @@ def _native_position_is_near_local_peak(state: dict, x: float, y: float) -> bool
     px0, px1 = max(0, peak_x - 1), min(data.shape[1], peak_x + 2)
     peak_neighborhood = np.where(
         valid[py0:py1, px0:px1], data[py0:py1, px0:px1], -np.inf,
-    )
-    return bool(data[peak_y, peak_x] >= np.max(peak_neighborhood))
+    ).copy()
+    peak_neighborhood[peak_y - py0, peak_x - px0] = -np.inf
+    # Strict prominence matters here: a flat plateau is not evidence for a
+    # positive point source, and is therefore never grounds for abstention.
+    return bool(data[peak_y, peak_x] > np.max(peak_neighborhood))
 
 
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
@@ -603,6 +632,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 float(cy),
                 radius,
                 background_exclude=pixel_candidate,
+                clip_sigma=threshold,
             )
             if target_measurement is None:
                 continue
@@ -610,6 +640,13 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             peer_sums: list[float] = []
             peer_variances: list[float] = []
             peer_peak_matches = 0
+            sampling_differs = False
+            support_clipped = (
+                cx - radius < 0.0
+                or cx + radius > data.shape[1] - 1.0
+                or cy - radius < 0.0
+                or cy + radius > data.shape[0] - 1.0
+            )
             common_support = True
             for peer_index in peers:
                 other = cutouts[peer_index]
@@ -621,7 +658,7 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     other_state['scale_arcsec']
                 )
                 peer_measurement = _native_aperture_with_planar_background(
-                    other_state, px, py, peer_radius,
+                    other_state, px, py, peer_radius, clip_sigma=threshold,
                 )
                 # SEP's finite subpixel quadrature changes the nominal circle
                 # area slightly with detector phase. A difference below one
@@ -647,7 +684,20 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 peer_peak_matches += int(
                     _native_position_is_near_local_peak(other_state, px, py)
                 )
+                phase_delta = np.mod(
+                    np.asarray([px - cx, py - cy], dtype=float) + 0.5, 1.0,
+                ) - 0.5
+                target_linear = np.asarray(c['wcs'].pixel_scale_matrix, dtype=float)
+                peer_linear = np.asarray(other['wcs'].pixel_scale_matrix, dtype=float)
+                sampling_differs = sampling_differs or (
+                    not np.allclose(phase_delta, 0.0, rtol=0.0, atol=1.0e-6)
+                    or not np.allclose(
+                        target_linear, peer_linear, rtol=1.0e-10, atol=1.0e-14,
+                    )
+                )
             if common_support and len(peer_sums) >= min_references:
+                if support_clipped:
+                    continue
                 weights = 1.0 / np.asarray(peer_variances, dtype=float)
                 peer_reference = float(np.average(peer_sums, weights=weights))
                 peer_reference_error = float(np.sqrt(1.0 / np.sum(weights)))
@@ -655,7 +705,8 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 # a native-pixel outlier sampling-ambiguous. Conservatively
                 # abstain rather than calling phase/noise structure a CR.
                 if (
-                    abs(peer_reference) > threshold * peer_reference_error
+                    sampling_differs
+                    and peer_reference > threshold * peer_reference_error
                     and peer_peak_matches >= 1
                 ):
                     continue

@@ -269,7 +269,28 @@ def _estimate_solver_peak_memory_bytes(
     priors = itemsize * int(n_scene_blocks) * n_scene * n_scene
     rectangular_design = itemsize * 2 * n_native_max * n_scene
     scene_crossproduct = itemsize * n_scene * n_scene
-    assembly_workspace = rectangular_design + scene_crossproduct
+    scene_assembly_workspace = rectangular_design + scene_crossproduct
+
+    # During one frame assembly Acols and H_scene remain live while source
+    # columns are constructed. Star columns are retained first as individual
+    # native vectors, then copied into S, and S * w_data creates another full
+    # rectangular temporary. Transient/host/nuclear/position columns can also
+    # remain live concurrently later in the same frame.
+    n_transient_columns = int(n_science_epochs > 0)
+    native_source_column_count = (
+        n_stars + n_transient_columns + n_host + n_nuclear + n_offsets
+    )
+    native_source_columns = itemsize * n_native_max * native_source_column_count
+    native_star_stack = itemsize * n_native_max * n_stars
+    native_weighted_star_stack = itemsize * n_native_max * n_stars
+    source_assembly_workspace = (
+        itemsize * n_native_max * n_scene
+        + scene_crossproduct
+        + native_source_columns
+        + native_star_stack
+        + native_weighted_star_stack
+    )
+    assembly_workspace = max(scene_assembly_workspace, source_assembly_workspace)
 
     factorization_workspace = itemsize * n_params * n_params
     covariance_base_workspace = itemsize * (
@@ -321,6 +342,11 @@ def _estimate_solver_peak_memory_bytes(
         'prior_bytes': int(priors),
         'rectangular_design_bytes': int(rectangular_design),
         'scene_crossproduct_bytes': int(scene_crossproduct),
+        'scene_assembly_workspace_bytes': int(scene_assembly_workspace),
+        'source_assembly_workspace_bytes': int(source_assembly_workspace),
+        'native_source_columns_bytes': int(native_source_columns),
+        'native_star_stack_bytes': int(native_star_stack),
+        'native_weighted_star_stack_bytes': int(native_weighted_star_stack),
         'covariance_workspace_bytes': int(covariance_workspace),
         'covariance_base_workspace_bytes': int(covariance_base_workspace),
         'covariance_normalization_bytes': int(covariance_normalization),
@@ -800,6 +826,7 @@ def _wcs_fast_mutation_key(w: WCS) -> tuple:
         tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
         tuple(np.asarray(getattr(ww, 'cdelt', ()), dtype=float).ravel().tolist()),
         tuple(np.asarray(getattr(ww, 'pc', ()), dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'cd', ()), dtype=float).ravel().tolist()),
         tuple(getattr(ww, 'ctype', ())),
         tuple(getattr(ww, 'cunit', ())),
         _fast_cache_float(getattr(ww, 'lonpole', np.nan)),
