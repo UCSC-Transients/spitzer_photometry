@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import sep
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
-from astropy.wcs import WCS
+from astropy.wcs import DistortionLookupTable, WCS
 from scipy.special import erf
 
 from src import (
@@ -169,6 +170,72 @@ def test_catalog_masked_core_uses_identical_measurement_and_response_operator(mo
     assert fraction > 0.0
     np.testing.assert_allclose(prior, truth, rtol=2.0e-3, atol=0.0)
 
+    fit_wcs = _wcs(9)
+    fit_wcs.wcs.crval = [source.ra.deg, source.dec.deg]
+    fit_response = solver.native_point_source_column(
+        fit_wcs,
+        fit_wcs,
+        (9, 9),
+        (9, 9),
+        "ch2",
+        source.ra.deg,
+        source.dec.deg,
+    ).reshape(9, 9)
+    fit_frame = {
+        "data": 1.0e-3 + truth * fit_response,
+        "sigma": np.full((9, 9), 1.0e-6),
+        "wcs": fit_wcs,
+        "raw_wcs": fit_wcs,
+        "epoch_id": 0,
+        "is_template": True,
+        "filename": "masked_core_fit_ch2.fits",
+        "mjd": 0.0,
+    }
+    with native_fit_campaign._temporary_config({
+        "USE_SCENE_GP_PRIOR": False,
+        "SCENE_INDEPENDENT_RIDGE": 1.0e10,
+        "ENFORCE_GP_CENTRAL_MONOTONICITY": False,
+        "FLOAT_TRANSIENT_POSITION": False,
+        "USE_HOST_GAUSSIAN_CORE": False,
+        "USE_NUCLEAR_POINT_SOURCE": False,
+        "PRF_ORDER_PROJECT_THEN_CONVOLVE": True,
+        "PRF_OPERATOR_MODE": "anchor",
+        "PRF_SPATIAL_ANCHORS_PER_AXIS": 1,
+    }):
+        result = solver.run_gls_solve(
+            [fit_frame],
+            [source],
+            [prior],
+            {},
+            (1.0, 1.0e-7),
+            np.zeros((9, 9)),
+            fit_wcs,
+            1,
+        )
+    np.testing.assert_allclose(result["star_fluxes"], [truth], rtol=2.0e-3)
+
+
+@pytest.mark.parametrize("sr", [1, 2, 4])
+def test_catalog_actual_native_reprojection_is_flux_invariant(monkeypatch, sr):
+    monkeypatch.setattr(config, "PRF_OVERSAMPLE", 20)
+    monkeypatch.setattr(solver, "load_prf", lambda *args, **kwargs: _gaussian_prf())
+    truth, source, row, frames, catalog_wcs = _catalog_measurement(
+        monkeypatch, sr=sr, core_holes=(False,),
+    )
+    prior, fraction = pipeline_fit._catalog_prior_flux_jy(
+        row,
+        source,
+        [],
+        catalog_wcs,
+        (49 * sr, 49 * sr),
+        "ch2",
+        catalog_frames=frames,
+        catalog_wcs=catalog_wcs,
+        catalog_shape=(49 * sr, 49 * sr),
+    )
+    assert fraction > 0.0
+    np.testing.assert_allclose(prior, truth, rtol=2.0e-3, atol=0.0)
+
 
 def test_catalog_per_frame_hole_uses_same_median_stack_support(monkeypatch):
     monkeypatch.setattr(config, "PRF_OVERSAMPLE", 20)
@@ -312,3 +379,210 @@ def test_consensus_cr_batches_whole_frame_wcs_work(monkeypatch):
     assert [int(frame["cr_mask"].sum()) for frame in frames] == [64, 0, 0]
     assert counts["calls"] <= 30
     assert counts["pixels"] <= 400_000
+
+
+def _clear_projection_caches():
+    solver._PROJECTION_CACHE.clear()
+    solver._WCS_PROVENANCE_CACHE.clear()
+
+
+@pytest.mark.parametrize("attribute", ["cpdis1", "det2im1"])
+def test_projection_cache_invalidates_mutated_lookup_table(attribute):
+    n = 9
+    scene_wcs = _wcs(n)
+    native_wcs = _wcs(n, phase=0.27)
+    table = DistortionLookupTable(
+        np.zeros((2, 2), dtype=np.float32),
+        (1.0, 1.0),
+        (1.0, 1.0),
+        (8.0, 8.0),
+    )
+    setattr(native_wcs, attribute, table)
+    scene = np.arange(n * n, dtype=float).reshape(n, n) * 1.0e-5
+    _clear_projection_caches()
+    before = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    table.data[:] = 0.3
+    warm = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    _clear_projection_caches()
+    cold = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    assert not np.allclose(before, cold, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(warm, cold, rtol=0.0, atol=0.0)
+
+
+def test_projection_cache_invalidates_mutated_header_parameter():
+    n = 9
+    scene_wcs = _wcs(n)
+    native_wcs = _wcs(n, phase=0.27)
+    native_wcs.wcs.lonpole = 180.0
+    scene = np.arange(n * n, dtype=float).reshape(n, n) * 1.0e-5
+    _clear_projection_caches()
+    before = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    native_wcs.wcs.lonpole = 0.0
+    warm = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    _clear_projection_caches()
+    cold = solver._project_scene_to_native(
+        scene, scene_wcs, native_wcs, (n, n),
+    )
+    assert not np.allclose(before, cold, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(warm, cold, rtol=0.0, atol=0.0)
+
+
+def test_cache_identity_invalidates_mutated_attached_detector_lookup():
+    cutout = _wcs(7)
+    detector = _wcs(256)
+    detector.det2im1 = DistortionLookupTable(
+        np.zeros((2, 2), dtype=np.float32),
+        (1.0, 1.0),
+        (1.0, 1.0),
+        (128.0, 128.0),
+    )
+    cutout._detector_wcs = detector
+    before = solver._wcs_projection_cache_key(cutout)
+    detector.det2im1.data[:] = 0.25
+    after = solver._wcs_projection_cache_key(cutout)
+    assert before != after
+
+
+@pytest.mark.parametrize(
+    ("mode", "project_then_convolve"),
+    [("anchor", False), ("exact", False), ("anchor", True)],
+)
+def test_attached_detector_mutation_warm_equals_cold_for_all_operator_modes(
+    monkeypatch,
+    mode,
+    project_then_convolve,
+):
+    monkeypatch.setattr(config, "PRF_OVERSAMPLE", 20)
+    monkeypatch.setattr(config, "PRF_OPERATOR_MODE", mode)
+    monkeypatch.setattr(config, "PRF_ORDER_PROJECT_THEN_CONVOLVE", project_then_convolve)
+    monkeypatch.setattr(config, "PRF_SPATIAL_ANCHORS_PER_AXIS", 1)
+    n = 7
+    cutout = _wcs(n)
+    cutout._detector_wcs = _wcs(256)
+    x_before, _ = cutout._detector_wcs.world_to_pixel_values(
+        config.TRANSIENT_RA, config.TRANSIENT_DEC,
+    )
+    midpoint = float(x_before) + 40.0
+
+    def detector_prf(_channel, x_det=None, y_det=None):
+        yy, xx = np.mgrid[-100:101, -100:101] / 20.0
+        sigma = 0.7 if float(x_det) < midpoint else 1.5
+        response = np.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
+        return response / response.sum()
+
+    monkeypatch.setattr(solver, "load_prf", detector_prf)
+    scene = np.zeros((n, n))
+    scene[n // 2, n // 2] = 0.002
+    for cache in (
+        solver._PROJECTION_CACHE,
+        solver._PRF_OPERATOR_BUNDLE_CACHE,
+        solver._PRF_NATIVE_OPERATOR_BUNDLE_CACHE,
+        solver._PRF_EXACT_OPERATOR_CACHE,
+        solver._WCS_PROVENANCE_CACHE,
+    ):
+        cache.clear()
+    before = solver._apply_frame_forward_operator(
+        scene, cutout, cutout, (n, n), (n, n), "ch2",
+    )
+    cutout._detector_wcs.wcs.crpix[0] += 80.0
+    warm = solver._apply_frame_forward_operator(
+        scene, cutout, cutout, (n, n), (n, n), "ch2",
+    )
+    for cache in (
+        solver._PROJECTION_CACHE,
+        solver._PRF_OPERATOR_BUNDLE_CACHE,
+        solver._PRF_NATIVE_OPERATOR_BUNDLE_CACHE,
+        solver._PRF_EXACT_OPERATOR_CACHE,
+        solver._WCS_PROVENANCE_CACHE,
+    ):
+        cache.clear()
+    cold = solver._apply_frame_forward_operator(
+        scene, cutout, cutout, (n, n), (n, n), "ch2",
+    )
+    assert not np.allclose(before, cold, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(warm, cold, rtol=0.0, atol=0.0)
+
+
+def _flat_frames(n: int, count: int) -> list[dict]:
+    frames = []
+    for index in range(count):
+        wcs = _wcs(n, phase=0.001 * index)
+        frames.append({
+            "data": np.full((n, n), 1.0e-3),
+            "sigma": np.full((n, n), 1.0e-5),
+            "wcs": wcs,
+            "raw_wcs": wcs,
+            "epoch_id": index,
+            "is_template": True,
+            "filename": f"memory_{index}_ch2.fits",
+            "mjd": index / 100.0,
+        })
+    return frames
+
+
+def test_memory_guard_counts_covariance_normalization_and_eigensolver(monkeypatch):
+    frames = _flat_frames(3, 200)
+    monkeypatch.setattr(config, "PRF_OPERATOR_MODE", "anchor")
+    monkeypatch.setattr(config, "PRF_ORDER_PROJECT_THEN_CONVOLVE", False)
+    monkeypatch.setattr(config, "PRF_SPATIAL_ANCHORS_PER_AXIS", 1)
+    estimate = solver._estimate_solver_peak_memory_bytes(
+        frames,
+        (3, 3),
+        n_scene_blocks=1,
+        n_stars=0,
+        n_science_epochs=0,
+    )
+    assert estimate["covariance_normalization_bytes"] == 8 * (2 * 200**2 + 200)
+    assert estimate["eigensolver_workspace_bytes"] == 8 * (4 * 200**2 + 8 * 200)
+    assert estimate["peak_bytes"] > 2_227_889
+    monkeypatch.setattr(config, "SOLVER_DENSE_MEMORY_LIMIT_BYTES", 2_227_889)
+    monkeypatch.setattr(
+        solver,
+        "frame_design_matrix",
+        lambda *args, **kwargs: pytest.fail("memory guard ran after design allocation"),
+    )
+    with pytest.raises(MemoryError, match="Dense fit peak"):
+        solver.run_gls_solve(
+            frames,
+            [],
+            [],
+            {},
+            (1.0, 1.0e-7),
+            np.zeros((3, 3)),
+            frames[0]["wcs"],
+            200,
+        )
+
+
+def test_memory_estimate_covers_multiple_scene_blocks_and_allows_budget(monkeypatch):
+    frames = _flat_frames(3, 8)
+    monkeypatch.setattr(config, "PRF_OPERATOR_MODE", "anchor")
+    monkeypatch.setattr(config, "PRF_ORDER_PROJECT_THEN_CONVOLVE", True)
+    monkeypatch.setattr(config, "PRF_SPATIAL_ANCHORS_PER_AXIS", 2)
+    one = solver._estimate_solver_peak_memory_bytes(
+        frames, (3, 5), n_scene_blocks=1, n_stars=2, n_science_epochs=1,
+    )
+    two = solver._estimate_solver_peak_memory_bytes(
+        frames, (3, 5), n_scene_blocks=2, n_stars=2, n_science_epochs=1,
+    )
+    assert two["n_params"] == one["n_params"] + 15
+    assert two["covariance_base_workspace_bytes"] > one["covariance_base_workspace_bytes"]
+    assert two["peak_bytes"] > one["peak_bytes"]
+    monkeypatch.setattr(config, "SOLVER_DENSE_MEMORY_LIMIT_BYTES", two["peak_bytes"])
+    assert solver._guard_solver_memory(
+        frames,
+        (3, 5),
+        n_scene_blocks=2,
+        n_stars=2,
+        n_science_epochs=1,
+    )["peak_bytes"] == two["peak_bytes"]

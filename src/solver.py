@@ -272,12 +272,26 @@ def _estimate_solver_peak_memory_bytes(
     assembly_workspace = rectangular_design + scene_crossproduct
 
     factorization_workspace = itemsize * n_params * n_params
-    covariance_workspace = itemsize * (
+    covariance_base_workspace = itemsize * (
         n_params * n_params  # scaled Hessian
         + n_params * n_params  # Cholesky factorization copy/work array
         + 2 * n_params * n_chosen  # unit RHS and selected solve columns
         + n_chosen * n_chosen  # selected covariance
         + 4 * n_params
+    )
+    # ``cov / scale[:, None] / scale[None, :]`` can retain both the first
+    # division result and the final correlation matrix.  ``eigvalsh`` then
+    # retains that matrix while copying it for LAPACK and, for the
+    # divide-and-conquer driver, can require roughly two additional dense
+    # work arrays.  These phases are mutually exclusive, so count their max
+    # on top of the arrays retained by the selected-covariance solve.
+    covariance_normalization = itemsize * (2 * n_chosen * n_chosen + n_chosen)
+    eigensolver_workspace = itemsize * (
+        4 * n_chosen * n_chosen + 8 * n_chosen
+    )
+    covariance_workspace = (
+        covariance_base_workspace
+        + max(covariance_normalization, eigensolver_workspace)
     )
     bounded_fallback_workspace = itemsize * 3 * n_params * n_params
 
@@ -308,6 +322,9 @@ def _estimate_solver_peak_memory_bytes(
         'rectangular_design_bytes': int(rectangular_design),
         'scene_crossproduct_bytes': int(scene_crossproduct),
         'covariance_workspace_bytes': int(covariance_workspace),
+        'covariance_base_workspace_bytes': int(covariance_base_workspace),
+        'covariance_normalization_bytes': int(covariance_normalization),
+        'eigensolver_workspace_bytes': int(eigensolver_workspace),
         'factorization_workspace_bytes': int(factorization_workspace),
         'bounded_fallback_workspace_bytes': int(bounded_fallback_workspace),
         'exact_operator_cache_bytes': int(exact_operators),
@@ -689,6 +706,18 @@ def _stable_cache_float_tuple(values) -> tuple:
     return tuple(_stable_cache_float(value) for value in np.asarray(values).ravel())
 
 
+def _fast_cache_float(value) -> float | tuple[str, int]:
+    """Low-overhead scalar form for the frequently checked mutation token."""
+    number = float(value)
+    if number != number:
+        return ('nan', 0)
+    if number == float('inf'):
+        return ('inf', 1)
+    if number == float('-inf'):
+        return ('inf', -1)
+    return number
+
+
 def _wcs_key(w: WCS):
     ww = w.wcs
     return (
@@ -758,16 +787,30 @@ def _lookup_distortion_fingerprint(w: WCS) -> tuple:
 
 
 def _wcs_fast_mutation_key(w: WCS) -> tuple:
-    """Cheap transform token used to validate a cached full WCS fingerprint."""
+    """Transform token used to validate a cached full WCS fingerprint.
+
+    This is deliberately content-complete rather than object-identity based:
+    Astropy WCS lookup tables and header-backed attributes are mutable in
+    place, so omitting them here could leave the memoized full fingerprint
+    stale after a CPDIS/DET2IM or header mutation.
+    """
     ww = w.wcs
     return (
-        tuple(np.asarray(w.pixel_scale_matrix, dtype=float).ravel().tolist()),
         tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
         tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, 'cdelt', [1.0, 1.0]), dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, 'pc', np.eye(2)), dtype=float).ravel().tolist()),
-        tuple(getattr(ww, 'ctype', ('', ''))),
+        tuple(np.asarray(getattr(ww, 'cdelt', ()), dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'pc', ()), dtype=float).ravel().tolist()),
+        tuple(getattr(ww, 'ctype', ())),
+        tuple(getattr(ww, 'cunit', ())),
+        _fast_cache_float(getattr(ww, 'lonpole', np.nan)),
+        _fast_cache_float(getattr(ww, 'latpole', np.nan)),
+        _fast_cache_float(getattr(ww, 'equinox', np.nan)),
+        str(getattr(ww, 'radesys', '')),
+        tuple((int(axis), int(parameter), _fast_cache_float(value))
+              for axis, parameter, value in ww.get_pv()),
+        tuple(tuple(value) for value in ww.get_ps()),
         _sip_distortion_fingerprint(w),
+        _lookup_distortion_fingerprint(w),
     )
 
 

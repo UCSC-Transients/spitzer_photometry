@@ -13,7 +13,6 @@ import sep
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.utils.exceptions import AstropyWarning
-from reproject import reproject_interp
 
 from . import config, diagnostics, gp_model, native_fit_campaign, preprocessing, run_manifest, solver
 
@@ -283,7 +282,10 @@ def run_pipeline_fit_core(*, skip_pre_analysis_check: bool = False):
 
     print("\n[Step 2b] Detecting Sources on Deep Template...")
     template_measurement_mask = np.any(np.asarray([
-        p.get('projected_valid_mask', np.isfinite(p['sigma'])) for p in processed_tpl
+        p['projected_valid_mask']
+        if 'projected_valid_mask' in p
+        else np.isfinite(p.get('sigma', p['data']))
+        for p in processed_tpl
     ], dtype=bool), axis=0)
     template_stars_table = preprocessing.update_catalog_with_template(
         med_stack,

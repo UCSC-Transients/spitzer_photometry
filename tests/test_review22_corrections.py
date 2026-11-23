@@ -160,7 +160,11 @@ def test_full_field_distant_source_does_not_abort_native_pipeline(monkeypatch, t
         "create_median_stack",
         lambda *args: (cutout["data"], np.zeros((9, 9))),
     )
-    monkeypatch.setattr(preprocessing, "update_catalog_with_template", lambda *args: table)
+    monkeypatch.setattr(
+        preprocessing,
+        "update_catalog_with_template",
+        lambda *args, **kwargs: table,
+    )
     monkeypatch.setattr(preprocessing, "align_frames_to_template", lambda *args: None)
     monkeypatch.setattr(preprocessing, "extract_native_analysis_cutouts", lambda *args: ([cutout], wcs))
     monkeypatch.setattr(
