@@ -27,6 +27,16 @@ ANALYSIS_BOX_SIZE = STAMP_SIZE_PX + 2 * BORDER_PX
 PRF_OVERSAMPLE = 100 # Standard IRAC PRF oversampling
 PRF_PIXEL_SCALE_ARCSEC = PIXEL_SCALE / PRF_OVERSAMPLE
 
+# Catalog photometry is measured on the supersampled template in a fixed angular
+# aperture, converted from Jy/native-pixel samples to integrated Jy, and then
+# corrected to the native point-renderer convention using its measured aperture
+# fraction on the template BCDs.
+CATALOG_APERTURE_RADIUS_ARCSEC = 4.0 * PIXEL_SCALE
+# The Gaussian catalog prior has the precision of this many typical individual
+# BCD measurements.  It stabilizes component separation but is not calibration
+# truth and must not dominate a well-sampled multi-exposure fit.
+CATALOG_PRIOR_EQUIVALENT_EXPOSURES = 5.0
+
 # Native ROI expands with SR: ANALYSIS_BOX_SIZE * SUPERSAMPLE_FACTOR detector px/side (cutouts only; no warp).
 # Latent north-up scene built in solver from these stamps.
 SUPERSAMPLE_FACTOR = 2
@@ -54,6 +64,15 @@ CR_BRIGHT_CORE_GUARD_RADIUS_PX = 0.0
 # Center used for CR_BRIGHT_CORE_GUARD_RADIUS_PX:
 # "transient" => config.TRANSIENT_RA/DEC, "nuclear" => config.NUCLEAR_POINT_RA/DEC
 CR_BRIGHT_CORE_GUARD_CENTER = "transient"
+# A candidate native-pixel CR must also be an excess in this fixed local
+# footprint.  This prevents ordinary phase/dither redistribution of a stable
+# undersampled point source from being classified as a CR.
+CR_CONSENSUS_APERTURE_RADIUS_PX = 4.0
+# Secondary native-aperture consistency test after the unchanged 8-sigma
+# candidate-pixel threshold.  The 1.9-sigma veto margin retains a deterministic
+# 20-sigma single-pixel CR after propagating aperture and local-background
+# uncertainty; the primary detection threshold remains eight sigma.
+CR_CONSENSUS_APERTURE_SIGMA = 1.9
 
 SPLIT_DATE_MJD = 58750.0
 EPOCH_WINDOW_DAYS = 1.0  # Maximum total span of a shared transient-flux group.
@@ -158,6 +177,10 @@ GALAXY_QA_ANNULUS_OUTER_PX = 14.0
 # so cutout/native fits use the same dense GP prior as smaller reprojected stamps.
 MAX_SCENE_PIXELS = 25000
 SOLVER_DENSE_MEMORY_LIMIT_BYTES = 4_000_000_000
+# A nuisance-marginalized fitted-parameter covariance whose normalized
+# correlation matrix has a smaller eigenvalue ratio is treated as near-null.
+# This is dimensionless and therefore invariant to image noise/unit scaling.
+SOLVER_IDENTIFIABILITY_RCOND = 1.0e-10
 # Scene GP stationary kernel: "matern32" (smooth) or "matern12" (exponential / rougher).
 GP_MATERN_ORDER = "matern32"
 # Precision build: "matern" (default Matérn) or "diagonal" (sparse ε·I, diagnostics / tests).

@@ -1,6 +1,7 @@
 """src/solver.py"""
 import sys
 import os
+import hashlib
 import logging
 import warnings
 from functools import wraps, lru_cache
@@ -10,7 +11,7 @@ import numpy as np
 from scipy.linalg import lstsq, cho_factor, cho_solve
 from scipy.sparse import coo_matrix
 from scipy.sparse import issparse
-from scipy.optimize import Bounds, minimize
+from scipy.optimize import Bounds, lsq_linear, minimize
 from scipy.ndimage import gaussian_filter, binary_erosion, map_coordinates, shift as ndimage_shift
 from scipy.signal import fftconvolve
 from astropy.io import fits
@@ -168,6 +169,224 @@ _PRF_OPERATOR_BUNDLE_CACHE = {}
 # where vec(L(img)) = A @ vec(img)
 _PRF_EXACT_OPERATOR_CACHE = {}
 _PRF_NATIVE_OPERATOR_BUNDLE_CACHE = {}
+_WCS_PROVENANCE_CACHE = {}
+
+
+def _directory_calibration_fingerprint(path: str) -> tuple:
+    """Return a cheap content identity for calibration files in ``path``."""
+    root = os.path.realpath(str(path))
+    try:
+        names = sorted(name for name in os.listdir(root) if name.lower().endswith(('.fits', '.fit', '.fts')))
+    except OSError:
+        return (root, 'unavailable')
+    identity = []
+    for name in names:
+        full = os.path.join(root, name)
+        try:
+            stat = os.stat(full)
+        except OSError:
+            identity.append((name, 'unavailable'))
+        else:
+            identity.append((name, int(stat.st_mtime_ns), int(stat.st_size)))
+    return (root, tuple(identity))
+
+
+@lru_cache(maxsize=32)
+def _prf_cache_fingerprint_cached(
+    channel: str,
+    settings: tuple,
+    prf_dir: str,
+    pmap_dir: str,
+) -> tuple:
+    return (
+        str(channel).lower(),
+        settings,
+        _directory_calibration_fingerprint(prf_dir),
+        _directory_calibration_fingerprint(pmap_dir),
+    )
+
+
+def _prf_cache_fingerprint(channel: str) -> tuple:
+    """Fingerprint every configuration/calibration input used by PRF operators."""
+    names = (
+        'PRF_OVERSAMPLE',
+        'PRF_PIXEL_SCALE_ARCSEC',
+        'PRF_PREBLUR_IN_OVERSAMPLE_PIXELS',
+        'PRF_APPLY_PMAP_GAIN',
+        'PRF_APPLY_APODIZATION',
+        'PRF_APODIZATION_EDGE',
+        'PRF_SPATIAL_ANCHORS_PER_AXIS',
+        'PRF_OPERATOR_MODE',
+        'PRF_OPERATOR_EXACT_MAX_PIXELS',
+        'PRF_ORDER_PROJECT_THEN_CONVOLVE',
+        'USE_SYNTHETIC_PRF',
+    )
+    settings = tuple((name, repr(getattr(config, name, None))) for name in names)
+    return _prf_cache_fingerprint_cached(
+        str(channel).lower(),
+        settings,
+        str(getattr(config, 'PRF_DIR', '')),
+        str(getattr(config, 'PMAP_DIR', '')),
+    )
+
+
+def _mask_fingerprint(entry: dict) -> str:
+    mask = valid_fit_mask(entry, effective_native_sigma_for_fit(entry['sigma'], entry))
+    return hashlib.sha256(np.ascontiguousarray(mask, dtype=np.uint8).tobytes()).hexdigest()
+
+
+def _estimate_solver_peak_memory_bytes(
+    cutouts: list[dict],
+    scene_shape: tuple[int, int],
+    *,
+    n_scene_blocks: int,
+    n_stars: int,
+    n_science_epochs: int,
+) -> dict[str, int]:
+    """Conservatively estimate concurrently live solver allocations.
+
+    The estimate includes retained exact/anchor operators, the largest
+    rectangular frame design and its weighted copy, dense normal/prior blocks,
+    and selected-covariance workspaces.  It is evaluated before any of those
+    arrays are allocated.
+    """
+    itemsize = np.dtype(np.float64).itemsize
+    n_scene = int(np.prod(scene_shape))
+    n_scene_total = int(n_scene_blocks) * n_scene
+    n_frames = len(cutouts)
+    n_native_each = [int(np.asarray(entry['data']).size) for entry in cutouts]
+    n_native_max = max(n_native_each, default=0)
+    host_list = getattr(config, 'HOST_GAUSSIAN_SIGMA_PX_LIST', None)
+    n_host = 0
+    if bool(getattr(config, 'USE_HOST_GAUSSIAN_CORE', False)):
+        n_host = len(host_list) if host_list else 1
+    n_nuclear = int(bool(getattr(config, 'USE_NUCLEAR_POINT_SOURCE', False)))
+    n_offsets = 2 if bool(getattr(config, 'FLOAT_TRANSIENT_POSITION', False)) and n_science_epochs else 0
+    n_params = n_scene_total + n_science_epochs + n_offsets + n_stars + n_host + n_nuclear + n_frames
+    n_chosen = max(0, n_params - n_scene_total)
+
+    hessian = itemsize * n_params * n_params
+    priors = itemsize * int(n_scene_blocks) * n_scene * n_scene
+    rectangular_design = itemsize * 2 * n_native_max * n_scene
+    scene_crossproduct = itemsize * n_scene * n_scene
+    scene_assembly_workspace = rectangular_design + scene_crossproduct
+
+    # During one frame assembly Acols and H_scene remain live while source
+    # columns are constructed. Star columns are retained first as individual
+    # native vectors, then copied into S, and S * w_data creates another full
+    # rectangular temporary. Transient/host/nuclear/position columns can also
+    # remain live concurrently later in the same frame.
+    n_transient_columns = int(n_science_epochs > 0)
+    native_source_column_count = (
+        n_stars + n_transient_columns + n_host + n_nuclear + n_offsets
+    )
+    native_source_columns = itemsize * n_native_max * native_source_column_count
+    native_star_stack = itemsize * n_native_max * n_stars
+    native_weighted_star_stack = itemsize * n_native_max * n_stars
+    source_assembly_workspace = (
+        itemsize * n_native_max * n_scene
+        + scene_crossproduct
+        + native_source_columns
+        + native_star_stack
+        + native_weighted_star_stack
+    )
+    assembly_workspace = max(scene_assembly_workspace, source_assembly_workspace)
+
+    factorization_workspace = itemsize * n_params * n_params
+    covariance_base_workspace = itemsize * (
+        n_params * n_params  # scaled Hessian
+        + n_params * n_params  # Cholesky factorization copy/work array
+        + 2 * n_params * n_chosen  # unit RHS and selected solve columns
+        + n_chosen * n_chosen  # selected covariance
+        + 4 * n_params
+    )
+    # ``cov / scale[:, None] / scale[None, :]`` can retain both the first
+    # division result and the final correlation matrix.  ``eigvalsh`` then
+    # retains that matrix while copying it for LAPACK and, for the
+    # divide-and-conquer driver, can require roughly two additional dense
+    # work arrays.  These phases are mutually exclusive, so count their max
+    # on top of the arrays retained by the selected-covariance solve.
+    covariance_normalization = itemsize * (2 * n_chosen * n_chosen + n_chosen)
+    eigensolver_workspace = itemsize * (
+        4 * n_chosen * n_chosen + 8 * n_chosen
+    )
+    covariance_workspace = (
+        covariance_base_workspace
+        + max(covariance_normalization, eigensolver_workspace)
+    )
+    bounded_fallback_workspace = itemsize * 3 * n_params * n_params
+
+    mode = _prf_operator_mode(scene_shape)
+    project_then_convolve = bool(getattr(config, 'PRF_ORDER_PROJECT_THEN_CONVOLVE', False))
+    exact_operators = 0
+    n_anchor = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3))) ** 2
+    # Scene-anchor kernels are retained for the PRF-support/edge diagnostic in
+    # every mode, including exact. Project-then-convolve additionally retains
+    # a native-grid anchor bundle while assembling the exact frame design.
+    scene_anchor_operators = itemsize * (2 * n_anchor + 1) * n_frames * n_scene
+    native_anchor_operators = 0
+    if project_then_convolve:
+        native_anchor_operators = itemsize * (2 * n_anchor + 1) * sum(n_native_each)
+    if mode == 'exact' and not project_then_convolve:
+        exact_operators = itemsize * n_frames * n_scene * n_scene
+    anchor_operators = scene_anchor_operators + native_anchor_operators
+
+    geometry_and_vectors = itemsize * (
+        n_scene_total * 8 + sum(n_native_each) * 6 + n_params * 6
+    )
+    retained = hessian + priors + exact_operators + anchor_operators + geometry_and_vectors
+    peak = retained + max(assembly_workspace, covariance_workspace, bounded_fallback_workspace)
+    return {
+        'peak_bytes': int(peak),
+        'hessian_bytes': int(hessian),
+        'prior_bytes': int(priors),
+        'rectangular_design_bytes': int(rectangular_design),
+        'scene_crossproduct_bytes': int(scene_crossproduct),
+        'scene_assembly_workspace_bytes': int(scene_assembly_workspace),
+        'source_assembly_workspace_bytes': int(source_assembly_workspace),
+        'native_source_columns_bytes': int(native_source_columns),
+        'native_star_stack_bytes': int(native_star_stack),
+        'native_weighted_star_stack_bytes': int(native_weighted_star_stack),
+        'covariance_workspace_bytes': int(covariance_workspace),
+        'covariance_base_workspace_bytes': int(covariance_base_workspace),
+        'covariance_normalization_bytes': int(covariance_normalization),
+        'eigensolver_workspace_bytes': int(eigensolver_workspace),
+        'factorization_workspace_bytes': int(factorization_workspace),
+        'bounded_fallback_workspace_bytes': int(bounded_fallback_workspace),
+        'exact_operator_cache_bytes': int(exact_operators),
+        'anchor_operator_cache_bytes': int(anchor_operators),
+        'scene_anchor_operator_cache_bytes': int(scene_anchor_operators),
+        'native_anchor_operator_cache_bytes': int(native_anchor_operators),
+        'geometry_and_vector_bytes': int(geometry_and_vectors),
+        'n_params': int(n_params),
+    }
+
+
+def _guard_solver_memory(
+    cutouts: list[dict],
+    scene_shape: tuple[int, int],
+    *,
+    n_scene_blocks: int,
+    n_stars: int,
+    n_science_epochs: int,
+) -> dict[str, int]:
+    estimate = _estimate_solver_peak_memory_bytes(
+        cutouts,
+        scene_shape,
+        n_scene_blocks=n_scene_blocks,
+        n_stars=n_stars,
+        n_science_epochs=n_science_epochs,
+    )
+    cap = int(getattr(config, 'SOLVER_DENSE_MEMORY_LIMIT_BYTES', 4_000_000_000))
+    if estimate['peak_bytes'] > cap:
+        raise MemoryError(
+            'Dense fit peak estimated at '
+            f"{estimate['peak_bytes'] / 2**20:.2f} MiB (cap {cap / 2**20:.2f} MiB; "
+            f"exact cache {estimate['exact_operator_cache_bytes'] / 2**20:.2f} MiB; "
+            f"rectangular design {estimate['rectangular_design_bytes'] / 2**20:.2f} MiB); "
+            'reduce the scene footprint/SR or use a validated sparse solver'
+        )
+    return estimate
 
 
 def _center_kernel_for_convolution(ker):
@@ -272,7 +491,12 @@ def _get_prf_operator_bundle(scene_wcs, w_native, scene_shape, channel, is_full_
     """
     h, w = int(scene_shape[0]), int(scene_shape[1])
     n_anch = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3)))
-    bkey = (id(scene_wcs), id(w_native), h, w, channel, bool(is_full_array), n_anch)
+    bkey = (
+        _wcs_projection_cache_key(scene_wcs),
+        _wcs_projection_cache_key(w_native),
+        h, w, channel, bool(is_full_array), n_anch,
+        _prf_cache_fingerprint(channel),
+    )
     if bkey in _PRF_OPERATOR_BUNDLE_CACHE:
         return _PRF_OPERATOR_BUNDLE_CACHE[bkey]
     n = n_anch
@@ -351,7 +575,11 @@ def _get_prf_operator_bundle_native(native_wcs, native_shape, channel, is_full_a
     """
     h, w = int(native_shape[0]), int(native_shape[1])
     n_anch = int(max(1, getattr(config, 'PRF_SPATIAL_ANCHORS_PER_AXIS', 3)))
-    bkey = (id(native_wcs), h, w, channel, bool(is_full_array), n_anch)
+    bkey = (
+        _wcs_projection_cache_key(native_wcs),
+        h, w, channel, bool(is_full_array), n_anch,
+        _prf_cache_fingerprint(channel),
+    )
     if bkey in _PRF_NATIVE_OPERATOR_BUNDLE_CACHE:
         return _PRF_NATIVE_OPERATOR_BUNDLE_CACHE[bkey]
 
@@ -439,7 +667,12 @@ def _prf_operator_mode(scene_shape):
 
 def _get_prf_exact_operator_matrix(scene_wcs, w_native, scene_shape, channel, is_full_array):
     h, w = int(scene_shape[0]), int(scene_shape[1])
-    key = (id(scene_wcs), id(w_native), h, w, channel, bool(is_full_array))
+    key = (
+        _wcs_projection_cache_key(scene_wcs),
+        _wcs_projection_cache_key(w_native),
+        h, w, channel, bool(is_full_array),
+        _prf_cache_fingerprint(channel),
+    )
     A = _PRF_EXACT_OPERATOR_CACHE.get(key)
     if A is not None:
         return A
@@ -483,15 +716,59 @@ def _apply_prf_adjoint(y_scene, scene_wcs, w_native, scene_shape, channel, is_fu
     return _apply_prf_adjoint_from_bundle(y2, kernels, weights, wsum)
 
 
+def _stable_cache_float(value) -> float | tuple[str, int]:
+    """Return a hashable float token whose NaN values compare equal."""
+    number = float(value)
+    if np.isnan(number):
+        return ('nan', 0)
+    if np.isposinf(number):
+        return ('inf', 1)
+    if np.isneginf(number):
+        return ('inf', -1)
+    return number
+
+
+def _stable_cache_float_tuple(values) -> tuple:
+    return tuple(_stable_cache_float(value) for value in np.asarray(values).ravel())
+
+
+def _fast_cache_float(value) -> float | tuple[str, int]:
+    """Low-overhead scalar form for the frequently checked mutation token."""
+    number = float(value)
+    if number != number:
+        return ('nan', 0)
+    if number == float('inf'):
+        return ('inf', 1)
+    if number == float('-inf'):
+        return ('inf', -1)
+    return number
+
+
 def _wcs_key(w: WCS):
     ww = w.wcs
     return (
-        tuple(np.asarray(w.pixel_scale_matrix, dtype=float).ravel().tolist()),
-        tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
-        tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, "cdelt", [np.nan, np.nan]), dtype=float).ravel().tolist()),
-        tuple(np.asarray(getattr(ww, "pc", np.eye(2)), dtype=float).ravel().tolist()),
+        _stable_cache_float_tuple(w.pixel_scale_matrix),
+        _stable_cache_float_tuple(ww.crpix),
+        _stable_cache_float_tuple(ww.crval),
+        _stable_cache_float_tuple(getattr(ww, "cdelt", [np.nan, np.nan])),
+        _stable_cache_float_tuple(getattr(ww, "pc", np.eye(2))),
         tuple(getattr(ww, "ctype", ["", ""])),
+        tuple(str(value) for value in getattr(ww, 'cunit', ())),
+        tuple(str(value) for value in getattr(ww, 'cname', ())),
+        _stable_cache_float(getattr(ww, 'lonpole', np.nan)),
+        _stable_cache_float(getattr(ww, 'latpole', np.nan)),
+        _stable_cache_float(getattr(ww, 'equinox', np.nan)),
+        str(getattr(ww, 'radesys', '')),
+        str(getattr(ww, 'specsys', '')),
+        _stable_cache_float(getattr(ww, 'restfrq', np.nan)),
+        _stable_cache_float(getattr(ww, 'restwav', np.nan)),
+        _stable_cache_float(getattr(ww, 'velosys', np.nan)),
+        str(getattr(ww, 'dateobs', '')),
+        _stable_cache_float(getattr(ww, 'mjdobs', np.nan)),
+        _stable_cache_float_tuple(getattr(ww, 'obsgeo', ())),
+        tuple((int(axis), int(parameter), _stable_cache_float(value))
+              for axis, parameter, value in ww.get_pv()),
+        tuple(tuple(value) for value in ww.get_ps()),
     )
 
 
@@ -516,8 +793,108 @@ def _sip_distortion_fingerprint(w: WCS) -> tuple:
     return ("sip", tuple(np.asarray(sip.crpix, dtype=float)), tuple(parts))
 
 
+def _lookup_distortion_fingerprint(w: WCS) -> tuple:
+    """Fingerprint FITS lookup-table distortions not represented by SIP."""
+    parts = []
+    for name in ('cpdis1', 'cpdis2', 'det2im1', 'det2im2'):
+        table = getattr(w, name, None)
+        if table is None:
+            parts.append((name, None))
+            continue
+        data = np.ascontiguousarray(getattr(table, 'data', np.zeros(0)), dtype=np.float64)
+        parts.append((
+            name,
+            hashlib.sha256(data.tobytes()).hexdigest(),
+            tuple(np.asarray(getattr(table, 'crpix', ()), dtype=float).ravel()),
+            tuple(np.asarray(getattr(table, 'crval', ()), dtype=float).ravel()),
+            tuple(np.asarray(getattr(table, 'cdelt', ()), dtype=float).ravel()),
+        ))
+    return tuple(parts)
+
+
+def _wcs_fast_mutation_key(w: WCS) -> tuple:
+    """Transform token used to validate a cached full WCS fingerprint.
+
+    This is deliberately content-complete rather than object-identity based:
+    Astropy WCS lookup tables and header-backed attributes are mutable in
+    place, so omitting them here could leave the memoized full fingerprint
+    stale after a CPDIS/DET2IM or header mutation.
+    """
+    ww = w.wcs
+    return (
+        tuple(np.asarray(ww.crpix, dtype=float).ravel().tolist()),
+        tuple(np.asarray(ww.crval, dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'cdelt', ()), dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'pc', ()), dtype=float).ravel().tolist()),
+        tuple(np.asarray(getattr(ww, 'cd', ()), dtype=float).ravel().tolist()),
+        tuple(getattr(ww, 'ctype', ())),
+        tuple(getattr(ww, 'cunit', ())),
+        _fast_cache_float(getattr(ww, 'lonpole', np.nan)),
+        _fast_cache_float(getattr(ww, 'latpole', np.nan)),
+        _fast_cache_float(getattr(ww, 'equinox', np.nan)),
+        str(getattr(ww, 'radesys', '')),
+        tuple((int(axis), int(parameter), _fast_cache_float(value))
+              for axis, parameter, value in ww.get_pv()),
+        tuple(tuple(value) for value in ww.get_ps()),
+        _sip_distortion_fingerprint(w),
+        _lookup_distortion_fingerprint(w),
+    )
+
+
+def _wcs_provenance_fingerprint(w: WCS, *, include_detector: bool = True) -> tuple:
+    """Return a content identity for sky and attached detector-coordinate WCSs.
+
+    The FITS header captures all serialized WCS axes/metadata, while explicit
+    SIP and lookup-table hashes cover distortion objects that Astropy may keep
+    outside the primary header. Attached full-detector WCS provenance is part
+    of PRF cache identity even when two analysis cutouts have identical WCSs.
+    """
+    detector = getattr(w, '_detector_wcs', None)
+    detector_token = None
+    if include_detector and detector is not None and detector is not w:
+        detector_token = (
+            _wcs_fast_mutation_key(detector),
+            tuple(getattr(detector, 'pixel_shape', ()) or ()),
+            tuple(getattr(detector, 'array_shape', ()) or ()),
+            tuple(getattr(detector, 'pixel_bounds', ()) or ()),
+        )
+    token = (
+        _wcs_fast_mutation_key(w),
+        tuple(getattr(w, 'pixel_shape', ()) or ()),
+        tuple(getattr(w, 'array_shape', ()) or ()),
+        tuple(getattr(w, 'pixel_bounds', ()) or ()),
+        detector_token,
+    )
+    cached = _WCS_PROVENANCE_CACHE.get(id(w))
+    if cached is not None and cached[0] is w and cached[1] == token:
+        return cached[2]
+
+    header = w.to_header(relax=True)
+    header_hash = hashlib.sha256(
+        header.tostring(sep='\n', endcard=False, padding=False).encode('utf-8')
+    ).hexdigest()
+    base = (
+        header_hash,
+        _wcs_key(w),
+        _sip_distortion_fingerprint(w),
+        _lookup_distortion_fingerprint(w),
+        tuple(getattr(w, 'pixel_shape', ()) or ()),
+        tuple(getattr(w, 'array_shape', ()) or ()),
+        tuple(getattr(w, 'pixel_bounds', ()) or ()),
+    )
+    if include_detector and detector is not None and detector is not w:
+        result = base + (('detector_wcs', _wcs_provenance_fingerprint(
+            detector,
+            include_detector=False,
+        )),)
+    else:
+        result = base + (('detector_wcs', None),)
+    _WCS_PROVENANCE_CACHE[id(w)] = (w, token, result)
+    return result
+
+
 def _wcs_projection_cache_key(w: WCS) -> tuple:
-    return (_wcs_key(w), _sip_distortion_fingerprint(w))
+    return _wcs_provenance_fingerprint(w)
 
 
 def _projection_matrix(scene_wcs: WCS, native_wcs: WCS, scene_shape, native_shape):
@@ -1069,6 +1446,16 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
     def jac(theta):
         return H @ theta - rhs
 
+    def projected_gradient_norm(theta):
+        if not np.isfinite(theta).all():
+            return np.inf
+        gradient = H @ theta - rhs
+        gradient[(theta <= lb + 1e-8) & (gradient > 0)] = 0.0
+        gradient[(theta >= ub - 1e-8) & (gradient < 0)] = 0.0
+        return float(np.max(np.abs(gradient)))
+
+    projected_tolerance = 1e-5 * max(1.0, float(np.max(np.abs(rhs))))
+
     bnds = list(zip(lb.tolist(), ub.tolist()))
     res = minimize(
         fun,
@@ -1079,24 +1466,51 @@ def _solve_map_bounds(H, rhs, lb, ub, x0=None):
         options={'maxiter': 2000, 'ftol': 1e-14, 'gtol': 1e-8},
     )
     if not res.success:
-        _log.warning("Bounded MAP (L-BFGS-B) did not converge: %s; falling back to trust-constr.", res.message)
-        res = minimize(
-            fun,
-            x0,
-            method='trust-constr',
-            jac=jac,
-            hess=lambda _th: H,
-            bounds=Bounds(lb, ub),
-            options={'verbose': 0, 'maxiter': 300},
-        )
-        if not res.success:
+        if projected_gradient_norm(res.x) <= projected_tolerance:
+            _log.warning(
+                "Bounded MAP reported %s but satisfies the projected-gradient criterion; accepting KKT point.",
+                res.message,
+            )
+        else:
+            _log.warning(
+                "Bounded MAP (L-BFGS-B) did not converge: %s; falling back to the exact PSD least-squares form.",
+                res.message,
+            )
+            eigenvalues, eigenvectors = np.linalg.eigh(H)
+            spectral_scale = max(1.0, float(np.max(np.abs(eigenvalues))))
+            spectral_tolerance = spectral_scale * H.shape[0] * np.finfo(float).eps * 10.0
+            positive = eigenvalues > spectral_tolerance
+            null_rhs = eigenvectors[:, ~positive].T @ rhs
+            if null_rhs.size and np.max(np.abs(null_rhs)) > projected_tolerance:
+                raise RuntimeError('Bounded MAP objective has a forced null-space component')
+            roots = np.sqrt(eigenvalues[positive])
+            design = roots[:, None] * eigenvectors[:, positive].T
+            target = (eigenvectors[:, positive].T @ rhs) / roots
+            res = lsq_linear(
+                design,
+                target,
+                bounds=(lb, ub),
+                method='trf',
+                tol=1e-12,
+                lsmr_tol='auto',
+                max_iter=1000,
+            )
+        if not res.success and projected_gradient_norm(res.x) > projected_tolerance:
+            _log.warning("Bounded MAP (PSD least-squares) did not converge: %s; falling back to trust-constr.", res.message)
+            res = minimize(
+                fun,
+                res.x if np.isfinite(res.x).all() else x0,
+                method='trust-constr',
+                jac=jac,
+                hess=lambda _th: H,
+                bounds=Bounds(lb, ub),
+                options={'verbose': 0, 'maxiter': 300},
+            )
+        if not res.success and projected_gradient_norm(res.x) > projected_tolerance:
             raise RuntimeError(f"Bounded MAP failed to converge: {res.message}")
     if not np.isfinite(res.x).all():
         raise RuntimeError('Bounded MAP returned nonfinite parameters')
-    gradient = H @ res.x - rhs
-    gradient[(res.x <= lb + 1e-8) & (gradient > 0)] = 0.
-    gradient[(res.x >= ub - 1e-8) & (gradient < 0)] = 0.
-    if np.max(np.abs(gradient)) > 1e-5 * max(1., np.max(np.abs(rhs))):
+    if projected_gradient_norm(res.x) > projected_tolerance:
         raise RuntimeError('Bounded MAP failed projected-gradient convergence check')
     return res.x / scale
 
@@ -1120,6 +1534,8 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     _PRF_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_NATIVE_OPERATOR_BUNDLE_CACHE.clear()
     _PRF_EXACT_OPERATOR_CACHE.clear()
+    _WCS_PROVENANCE_CACHE.clear()
+    _prf_cache_fingerprint_cached.cache_clear()
     
     if not cutouts: return None
     for entry in cutouts:
@@ -1130,41 +1546,57 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
     scene_shape = (cutouts[0]['data'].shape[0], cutouts[0]['data'].shape[1])
     if deep_template is not None and np.ndim(deep_template) == 2:
         scene_shape = (int(deep_template.shape[0]), int(deep_template.shape[1]))
-    n_scene = scene_shape[0]*scene_shape[1]
     n_blocks = 2 if isinstance(gp_params, dict) and gp_params.get('ell2') is not None else 1
-    estimated_bytes = 8 * (n_blocks * n_scene + len(cutouts) + len(stars) + 4)**2 * 6
-    if estimated_bytes > int(getattr(config, 'SOLVER_DENSE_MEMORY_LIMIT_BYTES', 4_000_000_000)):
-        raise MemoryError(f'Dense fit estimated at {estimated_bytes / 1e9:.2f} GB; '
-                          'reduce the scene footprint/SR or use a validated sparse solver')
+    science_epoch_count = len({
+        int(entry['epoch_id']) for entry in cutouts if not entry.get('is_template', False)
+    })
+    memory_estimate = _guard_solver_memory(
+        cutouts,
+        scene_shape,
+        n_scene_blocks=n_blocks,
+        n_stars=len(stars),
+        n_science_epochs=science_epoch_count,
+    )
+    n_scene = scene_shape[0]*scene_shape[1]
     
     results = {
         'transient_fluxes': np.zeros(len(cutouts)),
-        'transient_errs': np.zeros(len(cutouts)),
+        'transient_errs': np.full(len(cutouts), np.nan),
         'transient_epoch_fluxes': np.zeros(0),
-        'transient_epoch_errs': np.zeros(0),
+        'transient_epoch_errs': np.full(science_epoch_count, np.nan),
         'science_epoch_ids': np.zeros(0, dtype=int),
         'transient_epoch_index_by_id': {},
         'transient_bg_cov_by_epoch_id': {},
         'star_fluxes': np.zeros(len(stars)),
-        'star_errs': np.zeros(len(stars)),
+        'star_errs': np.full(len(stars), np.nan),
+        'star_prior_fluxes': np.asarray(star_initial_fluxes, dtype=float).copy(),
+        'star_prior_equivalent_exposures': float(
+            getattr(config, 'CATALOG_PRIOR_EQUIVALENT_EXPOSURES', 5.0)
+        ),
+        'star_prior_precision': np.full(len(stars), np.nan),
         'epoch_backgrounds': np.zeros(n_epochs),
         'model_scene': np.zeros(scene_shape),
         'scene_wcs': None,
         'scene_shape': scene_shape,
         'transient_dra_deg': 0.0,
         'transient_ddec_deg': 0.0,
-        'transient_dra_err_deg': 0.0,
-        'transient_ddec_err_deg': 0.0,
+        'transient_dra_err_deg': np.nan,
+        'transient_ddec_err_deg': np.nan,
         'host_core_flux': 0.0,
-        'host_core_err': 0.0,
+        'host_core_err': np.nan,
         'nuclear_point_flux': 0.0,
-        'nuclear_point_err': 0.0,
+        'nuclear_point_err': np.nan,
         'bcd_backgrounds': np.zeros(len(cutouts)),
         'gp_prior_params': {},
         'model_config': {name: getattr(config, name) for name in dir(config)
                          if name.isupper() and isinstance(getattr(config, name),
                             (str, int, float, bool, tuple, list, type(None)))},
         'effective_sigmas': [effective_native_sigma_for_fit(c['sigma'], c).copy() for c in cutouts],
+        'memory_estimate': memory_estimate,
+        'uncertainty_status': 'not_computed',
+        'uncertainty_failure_reason': None,
+        'identifiability_status': 'not_assessed',
+        'identifiability_diagnostics': {},
     }
 
     try:
@@ -1189,15 +1621,18 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             'var2': None if var2 is None else float(var2),
             'matern_order': gp_model.normalize_matern_order(getattr(config, 'GP_MATERN_ORDER', 'matern32')),
         }
-        cut_sig = tuple((str(c.get('filename', '')), int(bool(c.get('is_template')))) for c in cutouts)
+        cut_sig = tuple((
+            str(c.get('filename', '')),
+            int(bool(c.get('is_template'))),
+            int(c.get('epoch_id', 0)),
+            _wcs_projection_cache_key(c['wcs']),
+            _wcs_projection_cache_key(c['raw_wcs']),
+            _mask_fingerprint(c),
+        ) for c in cutouts)
         tw = template_wcs
         tw_sig = None
         if tw is not None:
-            tw_sig = (
-                tuple(np.asarray(tw.wcs.crpix, dtype=float).tolist()),
-                tuple(np.asarray(tw.wcs.crval, dtype=float).tolist()),
-                tuple(np.asarray(tw.wcs.cdelt, dtype=float).tolist()),
-            )
+            tw_sig = _wcs_projection_cache_key(tw)
         cache_key = (
             scene_shape,
             cut_sig,
@@ -1212,6 +1647,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             bool(getattr(config, 'USE_NUCLEAR_POINT_SOURCE', False)),
             getattr(config, 'NUCLEAR_POINT_RA', None),
             getattr(config, 'NUCLEAR_POINT_DEC', None),
+            _prf_cache_fingerprint(str(getattr(config, 'CHANNEL', 'ch2'))),
         )
         g = _GEOMETRY_CACHE.get(cache_key)
         cache_hit = g is not None
@@ -1358,6 +1794,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
         solver_stars = list(stars)
         solver_init = list(star_initial_fluxes)
         n_stars = len(solver_stars)
+        star_prior_precision = np.full(n_stars, np.nan, dtype=float)
         n_bg = len(cutouts)  # sky term per BCD
         use_nonneg = bool(getattr(config, 'TRANSIENT_NONNEGATIVE', True)) and n_sci_ep > 0
         float_pos = bool(getattr(config, 'FLOAT_TRANSIENT_POSITION', False)) and n_sci_ep > 0
@@ -1669,10 +2106,27 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                         Hloc[ibp, inp] += vnd
                         Hloc[inp, ibp] += vnd
 
+                # Python loop locals otherwise retain the preceding frame's
+                # individual star columns and stacked design while the next
+                # frame constructs its scene matrix.  They have already been
+                # reduced into Hloc/rhsloc, so release them before successor
+                # allocations rather than relying on an underestimated phase
+                # overlap in the preallocation guard.
+                if cols_s_native:
+                    del S
+                del cols_s
+                del cols_s_native
+                if n_stars > 0:
+                    del col_s
+
             if n_stars > 0:
                 star_diag = np.diag(Hloc[idx_stars:idx_star_end, idx_stars:idx_star_end])
                 avg_w = np.median(star_diag)
-                lam = max((avg_w / len(cutouts)) * 5.0, 1.0)
+                equivalent_exposures = float(max(
+                    0.0, getattr(config, 'CATALOG_PRIOR_EQUIVALENT_EXPOSURES', 5.0)
+                ))
+                lam = max((avg_w / len(cutouts)) * equivalent_exposures, 1.0)
+                star_prior_precision[:] = lam
                 for k, f_init in enumerate(solver_init):
                     im = idx_stars + k
                     Hloc[im, im] += lam
@@ -1862,6 +2316,7 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
 
         fitted_star_fluxes = sol[idx_stars:idx_star_end]
         results['star_fluxes'] = fitted_star_fluxes.copy()
+        results['star_prior_precision'] = star_prior_precision.copy()
 
         if n_host > 0:
             flux_h = np.asarray(sol[idx_star_end : idx_star_end + n_host], dtype=np.float64)
@@ -1901,9 +2356,50 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
             unit[chosen, np.arange(len(chosen))] = 1. / scale_h[chosen]
             columns = cho_solve(cho_factor(h_scaled, lower=True), unit) / scale_h[:, None]
             cov = columns[chosen, :]
+            covariance_diagonal = np.diag(cov)
+            if (
+                not np.isfinite(covariance_diagonal).all()
+                or np.any(covariance_diagonal <= 0.0)
+            ):
+                raise np.linalg.LinAlgError(
+                    'selected covariance has nonfinite or nonpositive variance'
+                )
+            covariance_scale = np.sqrt(covariance_diagonal)
+            covariance_correlation = (
+                cov / covariance_scale[:, None] / covariance_scale[None, :]
+            )
+            correlation_eigenvalues = np.linalg.eigvalsh(covariance_correlation)
+            correlation_max = float(np.max(correlation_eigenvalues))
+            correlation_min = float(np.min(correlation_eigenvalues))
+            correlation_rcond = (
+                correlation_min / correlation_max
+                if correlation_max > 0.0
+                else 0.0
+            )
+            identifiability_rcond = float(
+                getattr(config, 'SOLVER_IDENTIFIABILITY_RCOND', 1.0e-10)
+            )
+            results['identifiability_diagnostics'] = {
+                'selected_parameter_count': int(len(chosen)),
+                'covariance_correlation_min_eigenvalue': correlation_min,
+                'covariance_correlation_max_eigenvalue': correlation_max,
+                'covariance_correlation_rcond': correlation_rcond,
+                'required_rcond': identifiability_rcond,
+            }
+            if (
+                not np.isfinite(correlation_rcond)
+                or correlation_rcond <= identifiability_rcond
+            ):
+                raise np.linalg.LinAlgError(
+                    'selected fitted-parameter covariance has a scale-aware '
+                    f'near-null combination (rcond={correlation_rcond:.3e}, '
+                    f'required>{identifiability_rcond:.3e})'
+                )
             sig = np.full(n_params, np.nan)
-            sig[chosen] = np.sqrt(np.diag(cov))
+            sig[chosen] = np.sqrt(covariance_diagonal)
             results['uncertainty_kind'] = 'local_unconstrained_curvature_marginalized_over_scene'
+            results['uncertainty_status'] = 'available'
+            results['identifiability_status'] = 'locally_identifiable_at_fixed_model'
             results['transient_at_lower_bound'] = np.asarray(results['transient_epoch_fluxes']) <= 1e-12
             if n_sci_ep > 0:
                 e_err = sig[idx_trans:idx_trans + n_sci_ep].copy()
@@ -1948,10 +2444,25 @@ def run_gls_solve(cutouts, stars, star_initial_fluxes, gp_params, regularization
                     'cov_transient_background': float(sub[0, 1]),
                 }
             results['transient_bg_cov_by_epoch_id'] = cov_bg
-        except np.linalg.LinAlgError:
-            for key in ('transient_errs', 'transient_epoch_errs', 'star_errs'):
-                results[key] = np.full_like(results[key], np.nan, dtype=float)
-            _log.warning("Could not invert Hessian H; uncertainties are unavailable (NaN).")
+        except (np.linalg.LinAlgError, ValueError) as covariance_error:
+            results['transient_errs'] = np.full(len(cutouts), np.nan, dtype=float)
+            results['transient_epoch_errs'] = np.full(n_sci_ep, np.nan, dtype=float)
+            results['star_errs'] = np.full(n_stars, np.nan, dtype=float)
+            results['transient_dra_err_deg'] = np.nan
+            results['transient_ddec_err_deg'] = np.nan
+            results['host_core_err'] = np.nan
+            if n_host > 1:
+                results['host_core_errs'] = np.full(n_host, np.nan, dtype=float)
+            results['nuclear_point_err'] = np.nan
+            results['transient_bg_cov_by_epoch_id'] = {}
+            results['uncertainty_kind'] = 'unavailable'
+            results['uncertainty_status'] = 'unavailable'
+            results['uncertainty_failure_reason'] = str(covariance_error)
+            results['identifiability_status'] = 'non_identifiable_or_singular_curvature'
+            _log.warning(
+                "Could not compute fitted-parameter covariance; uncertainties are unavailable (NaN): %s",
+                covariance_error,
+            )
 
         if float_pos and idx_off is not None:
             dar = results['transient_dra_deg']
@@ -1978,6 +2489,7 @@ def _with_fitted_config(function):
         try:
             for name, value in fitted.items():
                 setattr(config, name, value)
+            _prf_cache_fingerprint_cached.cache_clear()
             return function(results, *args, **kwargs)
         finally:
             for name, value in saved.items():

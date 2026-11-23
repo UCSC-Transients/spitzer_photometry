@@ -41,7 +41,7 @@ Run the pipeline from the root directory:
 python main.py
 ```
 
-The default **`main.py`** entry point runs the **nominal native super-resolution** configuration (native BCD cutouts, combined science + template epochs, SR=2, independent-pixel scene with PRF convolution, transient as a delta with shared floated position). For flags, outputs, and tuning, see [`docs/NOMINAL_NATIVE_SCIENCE_RUN.md`](docs/NOMINAL_NATIVE_SCIENCE_RUN.md).
+The default **`main.py`** entry point runs the **nominal native super-resolution** configuration (native BCD cutouts, combined science + template epochs, SR=2, GP-regularized scene with PRF convolution, transient as a detector-integrated point response with shared floated position). For flags, outputs, and tuning, see [`docs/NOMINAL_NATIVE_SCIENCE_RUN.md`](docs/NOMINAL_NATIVE_SCIENCE_RUN.md).
 
 Optional staged / template-focused driver:
 
