@@ -399,6 +399,7 @@ def _native_aperture_with_planar_background(
     radius_px: float,
     *,
     subpix: int = 5,
+    background_exclude: np.ndarray | None = None,
 ) -> tuple[float, float, float] | None:
     """Measure one native aperture with a locally fitted affine background.
 
@@ -442,6 +443,8 @@ def _native_aperture_with_planar_background(
 
     distance = np.hypot(dx, dy)
     annulus = (distance >= 1.5 * radius) & (distance <= outer)
+    if background_exclude is not None:
+        annulus &= ~np.asarray(background_exclude, dtype=bool)[y0:y1, x0:x1]
     if np.count_nonzero(annulus) < 6 or not np.all(local_valid[annulus]):
         return None
     annulus_data = data[y0:y1, x0:x1][annulus]
@@ -477,6 +480,32 @@ def _native_aperture_with_planar_background(
     if not np.isfinite(flux) or not np.isfinite(variance) or variance <= 0.0:
         return None
     return flux, float(np.sqrt(variance)), float(moments[0])
+
+
+def _native_position_is_near_local_peak(state: dict, x: float, y: float) -> bool:
+    """Return whether a native local peak lies within one pixel of position."""
+    ix = int(np.rint(x))
+    iy = int(np.rint(y))
+    data = state['data']
+    valid = state['valid']
+    if (
+        iy < 0 or ix < 0
+        or iy >= data.shape[0] or ix >= data.shape[1]
+        or not valid[iy, ix]
+    ):
+        return False
+    y0, y1 = max(0, iy - 1), min(data.shape[0], iy + 2)
+    x0, x1 = max(0, ix - 1), min(data.shape[1], ix + 2)
+    nearby = np.where(valid[y0:y1, x0:x1], data[y0:y1, x0:x1], -np.inf)
+    peak_offset = np.unravel_index(int(np.argmax(nearby)), nearby.shape)
+    peak_y = y0 + int(peak_offset[0])
+    peak_x = x0 + int(peak_offset[1])
+    py0, py1 = max(0, peak_y - 1), min(data.shape[0], peak_y + 2)
+    px0, px1 = max(0, peak_x - 1), min(data.shape[1], peak_x + 2)
+    peak_neighborhood = np.where(
+        valid[py0:py1, px0:px1], data[py0:py1, px0:px1], -np.inf,
+    )
+    return bool(data[peak_y, peak_x] >= np.max(peak_neighborhood))
 
 
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
@@ -569,13 +598,18 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
             np.asarray(candidate_dec, dtype=float).tolist(),
         ):
             target_measurement = _native_aperture_with_planar_background(
-                state, float(cx), float(cy), radius,
+                state,
+                float(cx),
+                float(cy),
+                radius,
+                background_exclude=pixel_candidate,
             )
             if target_measurement is None:
                 continue
             target_sum_value, target_error_value, target_area_value = target_measurement
             peer_sums: list[float] = []
             peer_variances: list[float] = []
+            peer_peak_matches = 0
             common_support = True
             for peer_index in peers:
                 other = cutouts[peer_index]
@@ -610,6 +644,9 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     break
                 peer_sums.append(peer_sum_value)
                 peer_variances.append(peer_error_value**2)
+                peer_peak_matches += int(
+                    _native_position_is_near_local_peak(other_state, px, py)
+                )
             if common_support and len(peer_sums) >= min_references:
                 weights = 1.0 / np.asarray(peer_variances, dtype=float)
                 peer_reference = float(np.average(peer_sums, weights=weights))
@@ -617,7 +654,10 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 # A highly significant static source in the peer aperture makes
                 # a native-pixel outlier sampling-ambiguous. Conservatively
                 # abstain rather than calling phase/noise structure a CR.
-                if abs(peer_reference) > threshold * peer_reference_error:
+                if (
+                    abs(peer_reference) > threshold * peer_reference_error
+                    and peer_peak_matches >= 1
+                ):
                     continue
                 comparison_error = float(np.sqrt(
                     target_error_value**2 + peer_reference_error**2

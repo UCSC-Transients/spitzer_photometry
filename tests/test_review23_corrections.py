@@ -349,8 +349,8 @@ def test_consensus_cr_preserves_static_source_on_gradients_and_independent_noise
         assert [int(frame["cr_mask"].sum()) for frame in frames] == [0, 0, 0]
 
 
-def test_consensus_cr_batches_whole_frame_wcs_work(monkeypatch):
-    size = 128
+@pytest.mark.parametrize("size", [64, 128])
+def test_consensus_cr_batches_whole_frame_wcs_work(monkeypatch, size):
     wcs = _wcs(size)
     frames = [{
         "data": np.full((size, size), 1.0e-3),
