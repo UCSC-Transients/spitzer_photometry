@@ -240,6 +240,42 @@ def test_catalog_per_frame_calibration_handles_backgrounds_and_detector_prfs(
     assert fraction > 0.0
     np.testing.assert_allclose(prior, truth, rtol=2.0e-3, atol=0.0)
 
+    fit_wcs = _wcs(9)
+    fit_response = solver.native_point_source_column(
+        fit_wcs,
+        fit_wcs,
+        (9, 9),
+        (9, 9),
+        "ch2",
+        source.ra.deg,
+        source.dec.deg,
+    ).reshape(9, 9)
+    fit_frame = _frame(fit_wcs, 9, 0)
+    fit_frame["data"] += truth * fit_response
+    with native_fit_campaign._temporary_config({
+        "USE_SCENE_GP_PRIOR": False,
+        "SCENE_INDEPENDENT_RIDGE": 1.0e10,
+        "ENFORCE_GP_CENTRAL_MONOTONICITY": False,
+        "FLOAT_TRANSIENT_POSITION": False,
+        "TRANSIENT_NONNEGATIVE": False,
+        "USE_HOST_GAUSSIAN_CORE": False,
+        "USE_NUCLEAR_POINT_SOURCE": False,
+        "PRF_ORDER_PROJECT_THEN_CONVOLVE": True,
+        "PRF_OPERATOR_MODE": "anchor",
+        "PRF_SPATIAL_ANCHORS_PER_AXIS": 1,
+    }):
+        fitted = solver.run_gls_solve(
+            [fit_frame],
+            [source],
+            [prior],
+            {},
+            (1.0, 1.0e-7),
+            np.zeros((9, 9)),
+            fit_wcs,
+            1,
+        )
+    np.testing.assert_allclose(fitted["star_fluxes"], [truth], rtol=2.0e-3)
+
 
 def _clear_projection_caches():
     solver._PROJECTION_CACHE.clear()
