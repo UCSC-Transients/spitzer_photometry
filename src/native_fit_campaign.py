@@ -589,7 +589,7 @@ def _native_response_lobe_correction(
     y_center: float,
     radius: float,
     threshold: float,
-) -> tuple[float, float]:
+) -> tuple[float, float] | None:
     """Return signed outer-lobe correction and its propagated variance.
 
     Pixel phase, roll and spatial PRF changes move source flux between nearby
@@ -605,7 +605,7 @@ def _native_response_lobe_correction(
     x0 = max(0, int(np.floor(x_center - radius)))
     x1 = min(residual.shape[1], int(np.ceil(x_center + radius)) + 1)
     if x0 >= x1 or y0 >= y1:
-        return 0.0, 0.0
+        return None
     yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
     distance = np.hypot(xx + x0 - x_center, yy + y0 - y_center)
     ring = (distance > radius / 1.5) & (distance <= radius)
@@ -616,6 +616,11 @@ def _native_response_lobe_correction(
         & ring
         & np.isfinite(local_noise)
     )
+    # A partial ring is not a flux-conserving response comparison. Missing
+    # sky support therefore causes conservative abstention instead of a
+    # one-sided correction assembled from whichever lobes remain.
+    if not np.all(valid_ring[ring]):
+        return None
     negative_lobe = (
         supported[y0:y1, x0:x1]
         & (distance <= radius)
@@ -630,6 +635,115 @@ def _native_response_lobe_correction(
         float(np.sum(local_residual[valid_ring])),
         float(np.sum(np.square(local_noise[valid_ring]))),
     )
+
+
+def _native_candidate_impulse_estimate(
+    state: dict,
+    center: tuple[float, float],
+    candidate: tuple[int, int],
+) -> tuple[float, float]:
+    """Estimate a candidate's asymmetric native-pixel impulse.
+
+    A static detector response may be sharply peaked, but opposite pixels at
+    the same offset from its peer-defined local maximum share that response.
+    Their difference therefore localizes an off-center one-pixel artifact
+    without using the reprojected interpolation residual as an artifact-flux
+    estimate. The peak itself is deliberately ranked last; any aperture excess
+    left after asymmetric candidates is assigned there.
+
+    Returns the positive detector-pixel difference and its significance using
+    the unchanged target uncertainties. Missing reflected support returns zero
+    evidence and leaves the conservative aperture decision unchanged.
+    """
+    peak_x, peak_y = center
+    candidate_y, candidate_x = candidate
+    if (
+        candidate_x == int(np.rint(peak_x))
+        and candidate_y == int(np.rint(peak_y))
+    ):
+        return 0.0, -np.inf
+    mirror_x = 2.0 * peak_x - candidate_x
+    mirror_y = 2.0 * peak_y - candidate_y
+    valid = state['valid']
+    x0 = int(np.floor(mirror_x))
+    y0 = int(np.floor(mirror_y))
+    x1 = x0 + 1
+    y1 = y0 + 1
+    if (
+        x0 < 0 or y0 < 0
+        or x1 >= valid.shape[1] or y1 >= valid.shape[0]
+        or not valid[candidate_y, candidate_x]
+        or not np.all(valid[y0:y1 + 1, x0:x1 + 1])
+    ):
+        return 0.0, -np.inf
+    data = state['data']
+    sigma = state['sigma']
+    wx = mirror_x - x0
+    wy = mirror_y - y0
+    weights = np.asarray([
+        (1.0 - wx) * (1.0 - wy),
+        wx * (1.0 - wy),
+        (1.0 - wx) * wy,
+        wx * wy,
+    ])
+    mirror_values = np.asarray([
+        data[y0, x0], data[y0, x1], data[y1, x0], data[y1, x1],
+    ])
+    mirror_sigmas = np.asarray([
+        sigma[y0, x0], sigma[y0, x1], sigma[y1, x0], sigma[y1, x1],
+    ])
+    mirror_value = float(weights @ mirror_values)
+    mirror_variance = float(np.square(weights) @ np.square(mirror_sigmas))
+    difference = float(
+        data[candidate_y, candidate_x] - mirror_value
+    )
+    error = float(np.sqrt(
+        sigma[candidate_y, candidate_x] ** 2 + mirror_variance,
+    ))
+    if not np.isfinite(difference) or not np.isfinite(error) or error <= 0.0:
+        return 0.0, -np.inf
+    return max(0.0, difference), difference / error
+
+
+def _native_response_centroid(
+    state: dict,
+    peak: tuple[int, int],
+    radius: float = 4.0,
+) -> tuple[float, float]:
+    """Return a subpixel centroid of the peer response near a local peak.
+
+    The centroid is computed from the reprojected peer median, not the target,
+    so a target-only artifact cannot move the response symmetry center. A local
+    outer-ring median removes the constant background. Flat or unsupported
+    neighborhoods fall back to the integer peak.
+    """
+    peak_x, peak_y = peak
+    data = state['data']
+    valid = state['valid']
+    extent = int(np.ceil(radius)) + 1
+    x0 = max(0, peak_x - extent)
+    x1 = min(data.shape[1], peak_x + extent + 1)
+    y0 = max(0, peak_y - extent)
+    y1 = min(data.shape[0], peak_y + extent + 1)
+    yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
+    xx += x0
+    yy += y0
+    distance = np.hypot(xx - peak_x, yy - peak_y)
+    local_valid = valid[y0:y1, x0:x1] & np.isfinite(data[y0:y1, x0:x1])
+    background_pixels = local_valid & (distance >= 0.75 * radius)
+    if not np.any(background_pixels):
+        return float(peak_x), float(peak_y)
+    background = float(np.median(data[y0:y1, x0:x1][background_pixels]))
+    source_pixels = local_valid & (distance <= radius)
+    weights = np.where(
+        source_pixels,
+        np.maximum(data[y0:y1, x0:x1] - background, 0.0),
+        0.0,
+    )
+    total = float(np.sum(weights))
+    if not np.isfinite(total) or total <= np.finfo(float).eps:
+        return float(peak_x), float(peak_y)
+    return float(np.sum(weights * xx) / total), float(np.sum(weights * yy) / total)
 
 
 def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_references: int = 2) -> None:
@@ -675,8 +789,35 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         for j in peers:
             other = cutouts[j]
             vm = solver.valid_fit_mask(other)
-            ref, _ = reproject_interp((np.where(vm, other['data'], np.nan), other['wcs']),
-                                      c['wcs'], shape_out=data.shape)
+            sample_x = 0.5 * (data.shape[1] - 1.0)
+            sample_y = 0.5 * (data.shape[0] - 1.0)
+            sample_ra, sample_dec = c['wcs'].pixel_to_world_values(
+                sample_x, sample_y,
+            )
+            peer_x, peer_y = other['wcs'].world_to_pixel_values(
+                sample_ra, sample_dec,
+            )
+            phase_delta = np.mod(
+                np.asarray([
+                    float(peer_x) - sample_x,
+                    float(peer_y) - sample_y,
+                ]) + 0.5,
+                1.0,
+            ) - 0.5
+            same_sampling = (
+                np.allclose(phase_delta, 0.0, rtol=0.0, atol=1.0e-6)
+                and np.allclose(
+                    np.asarray(c['wcs'].pixel_scale_matrix, dtype=float),
+                    np.asarray(other['wcs'].pixel_scale_matrix, dtype=float),
+                    rtol=1.0e-10,
+                    atol=1.0e-14,
+                )
+            )
+            ref, _ = reproject_interp(
+                (np.where(vm, other['data'], np.nan), other['wcs']),
+                c['wcs'], shape_out=data.shape,
+                order='bilinear' if same_sampling else 'bicubic',
+            )
             err, _ = reproject_interp((np.where(vm, other['sigma'], np.nan), other['wcs']),
                                       c['wcs'], shape_out=data.shape)
             overlap = valid & np.isfinite(ref) & np.isfinite(err)
@@ -717,8 +858,21 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         peak_groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
         peak_excess: dict[tuple[int, int], bool] = {}
         peak_artifact_flux: dict[tuple[int, int], float | None] = {}
+        peak_sampling_differs: dict[tuple[int, int], bool] = {}
+        reference_state = {
+            'data': reference,
+            'sigma': noise,
+            'valid': supported & np.isfinite(reference),
+        }
         for cy, cx in zip(candidate_y.tolist(), candidate_x.tolist()):
-            peak = _native_local_peak_position(state, float(cx), float(cy))
+            if _native_position_is_near_local_peak(
+                reference_state, float(cx), float(cy),
+            ):
+                peak = _native_local_peak_position(
+                    reference_state, float(cx), float(cy),
+                )
+            else:
+                peak = _native_local_peak_position(state, float(cx), float(cy))
             if peak is None:
                 continue
             peak_groups.setdefault(peak, []).append((cy, cx))
@@ -803,12 +957,27 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     )
                 )
             if common_support and len(peer_sums) >= min_references:
+                peak_sampling_differs[peak] = sampling_differs
                 if sampling_differs and support_clipped:
                     peak_excess[peak] = False
                     continue
-                weights = 1.0 / np.asarray(peer_variances, dtype=float)
-                peer_reference = float(np.average(peer_sums, weights=weights))
-                peer_reference_error = float(np.sqrt(1.0 / np.sum(weights)))
+                # Match the pixelwise peer reference: use the same median
+                # estimator for native aperture flux. Propagate the locally
+                # selected median's unchanged measurement variance; for an
+                # even peer count NumPy's median is the mean of the two middle
+                # order statistics.
+                peer_order = np.argsort(np.asarray(peer_sums), kind='stable')
+                middle = len(peer_order) // 2
+                if len(peer_order) % 2:
+                    median_indices = peer_order[middle:middle + 1]
+                else:
+                    median_indices = peer_order[middle - 1:middle + 1]
+                peer_reference = float(np.mean(
+                    np.asarray(peer_sums)[median_indices],
+                ))
+                peer_reference_error = float(np.sqrt(
+                    np.sum(np.asarray(peer_variances)[median_indices])
+                ) / len(median_indices))
                 comparison_error = float(np.sqrt(
                     target_error_value**2 + peer_reference_error**2
                 ))
@@ -816,9 +985,9 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                 peak_excess[peak] = (
                     aperture_excess
                 ) > aperture_sigma * comparison_error
-                peak_artifact_flux[peak] = None
+                peak_artifact_flux[peak] = aperture_excess
                 extended_radius = 1.5 * radius
-                lobe_correction, lobe_variance = _native_response_lobe_correction(
+                lobe_result = _native_response_lobe_correction(
                     data - reference,
                     noise,
                     supported & valid,
@@ -827,6 +996,10 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     extended_radius,
                     threshold,
                 )
+                if lobe_result is None:
+                    peak_excess[peak] = False
+                    continue
+                lobe_correction, lobe_variance = lobe_result or (0.0, 0.0)
                 if peak_excess[peak] and lobe_correction < 0.0:
                     corrected_excess = aperture_excess + lobe_correction
                     corrected_error = float(np.sqrt(
@@ -837,12 +1010,6 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
                     )
                     if peak_excess[peak]:
                         peak_artifact_flux[peak] = corrected_excess
-                elif peak_excess[peak] and sampling_differs:
-                    # Sampling changed without a significant negative outer
-                    # lobe. The aperture establishes a CR, but interpolation
-                    # can make adjacent pixels pass the pixel test; assign the
-                    # excess to the strongest candidate without vetoing it.
-                    peak_artifact_flux[peak] = 0.0
             else:
                 peak_excess[peak] = False
         # Without a signed response lobe, every independently thresholded
@@ -854,22 +1021,45 @@ def apply_consensus_cr_masks(cutouts: List[dict], threshold: float = 8., min_ref
         for peak, candidates in peak_groups.items():
             if not peak_excess.get(peak, False):
                 continue
-            ranked = sorted(
-                candidates,
-                key=lambda pos: candidate_score[pos],
-                reverse=True,
-            )
+            impulse_estimates = {
+                candidate: (
+                    _native_candidate_impulse_estimate(
+                        state,
+                        _native_response_centroid(reference_state, peak),
+                        candidate,
+                    )
+                    if peak_sampling_differs.get(peak, False)
+                    else (
+                        max(0.0, float(data[candidate] - reference[candidate])),
+                        float(candidate_score[candidate]),
+                    )
+                )
+                for candidate in candidates
+            }
+            ranked = sorted(candidates, key=lambda pos: (
+                impulse_estimates[pos][1], candidate_score[pos],
+            ), reverse=True)
             artifact_flux = peak_artifact_flux.get(peak)
             if artifact_flux is None:
                 for cy, cx in ranked:
                     aperture_candidate[cy, cx] = True
                 continue
-            assigned_flux = 0.0
+            remaining_flux = max(0.0, float(artifact_flux))
+            selected_count = 0
             for cy, cx in ranked:
-                aperture_candidate[cy, cx] = True
-                assigned_flux += max(0.0, float(data[cy, cx] - reference[cy, cx]))
-                if assigned_flux >= artifact_flux:
+                if (
+                    selected_count > 0
+                    and remaining_flux <= aperture_sigma * comparison_error
+                ):
                     break
+                aperture_candidate[cy, cx] = True
+                selected_count += 1
+                impulse_flux = impulse_estimates[(cy, cx)][0]
+                if impulse_flux <= 0.0:
+                    impulse_flux = max(
+                        0.0, float(data[cy, cx] - reference[cy, cx]),
+                    )
+                remaining_flux = max(0.0, remaining_flux - impulse_flux)
         cr = pixel_candidate & aperture_candidate
         c['cr_status'] = 'consensus'
         masks.append(cr)

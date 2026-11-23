@@ -173,6 +173,72 @@ def _catalog_frame_positive_outliers(
     return support & aperture_pixels & ((data - model) > threshold * sigma)
 
 
+def _catalog_remove_affine_nuisance(
+    data: np.ndarray,
+    response: np.ndarray,
+    sigma: np.ndarray,
+    support: np.ndarray,
+    annulus_pixels: np.ndarray,
+    x_offset: np.ndarray,
+    y_offset: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project data and unit response through one affine-annulus operator.
+
+    The weighted annulus fit is a linear nuisance projection.  Applying the
+    identical projection to the observed image and its rendered unit source
+    preserves ``data = flux * response`` after any supported affine sky is
+    removed, including asymmetric masks.  Artifact selection must precede this
+    operation so the projection itself remains data-independent and linear.
+
+    Parameters
+    ----------
+    data, response, sigma
+        Reprojected catalog-grid image, unit-source response, and unchanged
+        measurement uncertainty for one exposure.
+    support
+        Pixels retained after native/reprojection validity and CR selection.
+    annulus_pixels
+        Catalog measurement's recorded background-annulus footprint.
+    x_offset, y_offset
+        Catalog-grid pixel offsets from the measured source position.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Affine-residualized data and response on the original grid.
+
+    Raises
+    ------
+    ValueError
+        If the retained annulus cannot identify a constant and two gradients.
+    """
+    fit_support = support & annulus_pixels
+    if np.count_nonzero(fit_support) < 3:
+        raise ValueError('Catalog frame has insufficient affine-background support')
+    design = np.column_stack((
+        np.ones(np.count_nonzero(fit_support), dtype=float),
+        x_offset[fit_support],
+        y_offset[fit_support],
+    ))
+    weighted_design = design / sigma[fit_support, None]
+    if np.linalg.matrix_rank(weighted_design) < 3:
+        raise ValueError('Catalog frame affine background is not identifiable')
+    normal = weighted_design.T @ weighted_design
+    data_rhs = weighted_design.T @ (data[fit_support] / sigma[fit_support])
+    response_rhs = weighted_design.T @ (
+        response[fit_support] / sigma[fit_support]
+    )
+    data_coefficients = np.linalg.solve(normal, data_rhs)
+    response_coefficients = np.linalg.solve(normal, response_rhs)
+    full_design = np.stack((
+        np.ones(data.shape, dtype=float), x_offset, y_offset,
+    ), axis=-1)
+    return (
+        data - full_design @ data_coefficients,
+        response - full_design @ response_coefficients,
+    )
+
+
 def _catalog_measurement_aperture_fraction(
     row,
     source: SkyCoord,
@@ -272,8 +338,15 @@ def _catalog_measurement_aperture_fraction(
         support = np.asarray(record['support'], dtype=bool)
         source_support = support & aperture_pixels & np.isfinite(response)
         response_scale = float(np.sum(np.abs(response[source_support])))
+        annulus_support = support & annulus_pixels
+        annulus_design = np.column_stack((
+            np.ones(np.count_nonzero(annulus_support), dtype=float),
+            x_offset[annulus_support],
+            y_offset[annulus_support],
+        ))
         if (
-            np.any(support & annulus_pixels)
+            np.count_nonzero(annulus_support) >= 3
+            and np.linalg.matrix_rank(annulus_design) == 3
             and np.any(source_support)
             and response_scale > np.finfo(float).eps
         ):
@@ -289,20 +362,8 @@ def _catalog_measurement_aperture_fraction(
         data_cube = np.asarray(projected_data, dtype=float).copy()
         response_cube = np.asarray(responses, dtype=float).copy()
         support_cube = np.asarray(supports, dtype=bool)
-        for frame_index in range(data_cube.shape[0]):
-            valid_annulus = support_cube[frame_index] & annulus_pixels
-            # Remove each frame's constant annulus level from both data and
-            # unit response.  For data = background + flux * response this is
-            # a matched linear operation, even when detector PRFs differ.
-            data_cube[frame_index] -= float(np.median(
-                data_cube[frame_index][valid_annulus],
-            ))
-            response_cube[frame_index] -= float(np.median(
-                response_cube[frame_index][valid_annulus],
-            ))
         # Classify detector artifacts relative to each exposure's exact source
-        # response and a fitted affine sky.  Only the support changes: the
-        # catalog data, renderer response and uncertainties remain untouched.
+        # response and a fitted affine sky. Only support changes in this step.
         if all(sigma is not None for sigma in projected_sigmas):
             sigma_cube = np.asarray(projected_sigmas, dtype=float)
             for frame_index in range(data_cube.shape[0]):
@@ -315,6 +376,36 @@ def _catalog_measurement_aperture_fraction(
                     annulus_pixels,
                     x_offset,
                     y_offset,
+                )
+            # Remove the retained affine nuisance with one exactly matched
+            # linear operator for observed data and rendered unit response.
+            for frame_index in range(data_cube.shape[0]):
+                data_cube[frame_index], response_cube[frame_index] = (
+                    _catalog_remove_affine_nuisance(
+                        data_cube[frame_index],
+                        response_cube[frame_index],
+                        sigma_cube[frame_index],
+                        support_cube[frame_index],
+                        annulus_pixels,
+                        x_offset,
+                        y_offset,
+                    )
+                )
+        else:
+            # Without projected uncertainties, use equal weights while still
+            # applying the identical affine nuisance operator to both arrays.
+            unit_sigma = np.ones(tuple(catalog_shape), dtype=float)
+            for frame_index in range(data_cube.shape[0]):
+                data_cube[frame_index], response_cube[frame_index] = (
+                    _catalog_remove_affine_nuisance(
+                        data_cube[frame_index],
+                        response_cube[frame_index],
+                        unit_sigma,
+                        support_cube[frame_index],
+                        annulus_pixels,
+                        x_offset,
+                        y_offset,
+                    )
                 )
         sortable_data = np.where(support_cube, data_cube, np.inf)
         order = np.argsort(sortable_data, axis=0, kind='stable')
