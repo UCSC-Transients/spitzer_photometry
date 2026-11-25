@@ -141,10 +141,12 @@ def residual_metrics(
 
     residual_array = np.asarray(residual, dtype=np.float64)
     sigma = np.asarray(measurement_sigma, dtype=np.float64)
-    train = np.asarray(training_mask, dtype=bool)
-    heldout = np.asarray(heldout_mask, dtype=bool)
+    train = np.asarray(training_mask, dtype=bool).copy()
+    heldout = np.asarray(heldout_mask, dtype=bool).copy()
     if not (residual_array.shape == sigma.shape == train.shape == heldout.shape):
         raise ValueError("residual, sigma, and masks must have identical shapes")
+    if np.any(train & heldout):
+        raise ValueError("training and held-out masks must not overlap")
     valid = np.isfinite(residual_array) & np.isfinite(sigma) & (sigma > 0.0)
     train &= valid
     heldout &= valid

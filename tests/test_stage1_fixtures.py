@@ -4,6 +4,8 @@ import pytest
 from src.validation_fixtures import (
     ACCEPTANCE_SEEDS,
     DEVELOPMENT_SEEDS,
+    RETIRED_ACCEPTANCE_EXPOSURES,
+    RETIRED_ACCEPTANCE_SEEDS,
     RESERVED_ACCEPTANCE_EXPOSURES,
     make_validation_fixture,
 )
@@ -63,16 +65,15 @@ def test_epoch_edges_do_not_single_linkage_chain():
     }
     assert max(by_epoch[0]) - min(by_epoch[0]) == pytest.approx(1.0)
     assert max(by_epoch[1]) - min(by_epoch[1]) == pytest.approx(1.0)
-    assert min(by_epoch[1]) - max(by_epoch[0]) > 1.0
+    ordered_mjd = sorted(exposure.mjd for exposure in science)
+    assert all(right - left <= 1.0 for left, right in zip(ordered_mjd, ordered_mjd[1:]))
+    assert max(ordered_mjd) - min(ordered_mjd) > 1.0
+    assert {exposure.epoch_id for exposure in science} == {0, 1}
 
 
 def test_acceptance_partition_is_reserved_from_required_pr_seeds():
     with pytest.raises(ValueError, match="registered development seed"):
         make_validation_fixture(seed=ACCEPTANCE_SEEDS[0])
-    acceptance = make_validation_fixture(seed=ACCEPTANCE_SEEDS[0], partition="acceptance")
-    assert acceptance.metadata["partition"] == "acceptance"
-    assert all(exposure.partition == "acceptance" for exposure in acceptance.exposures)
-    assert all(
-        any(exposure.exposure_id.startswith(prefix) for prefix in RESERVED_ACCEPTANCE_EXPOSURES)
-        for exposure in acceptance.exposures
-    )
+    assert set(ACCEPTANCE_SEEDS).isdisjoint(DEVELOPMENT_SEEDS)
+    assert set(ACCEPTANCE_SEEDS).isdisjoint(RETIRED_ACCEPTANCE_SEEDS)
+    assert set(RESERVED_ACCEPTANCE_EXPOSURES).isdisjoint(RETIRED_ACCEPTANCE_EXPOSURES)

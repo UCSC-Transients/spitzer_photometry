@@ -34,10 +34,25 @@ def check_manifest(manifest_path: str | None) -> dict[str, object]:
     path = Path(manifest_path)
     if not path.is_file():
         return {"status": "missing", "reason": "configured manifest path is unavailable", "files_checked": 0}
-    payload = json.loads(path.read_text())
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"status": "invalid", "reason": "manifest is not valid JSON", "files_checked": 0}
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list) or not payload["files"]:
+        return {
+            "status": "invalid",
+            "reason": "manifest must contain a nonempty files list",
+            "files_checked": 0,
+        }
     failures = []
     checked = 0
-    for item in payload.get("files", []):
+    for index, item in enumerate(payload["files"]):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("sha256"), str):
+            failures.append({"id": f"manifest-entry-{index}", "reason": "invalid_manifest_entry"})
+            continue
+        if len(item["sha256"]) != 64 or any(character not in "0123456789abcdefABCDEF" for character in item["sha256"]):
+            failures.append({"id": item.get("id", f"manifest-entry-{index}"), "reason": "invalid_checksum"})
+            continue
         file_path = Path(item["path"])
         if not file_path.is_file():
             failures.append({"id": item.get("id", file_path.name), "reason": "missing"})
@@ -56,7 +71,7 @@ def check_manifest(manifest_path: str | None) -> dict[str, object]:
         except (OSError, ValueError, TypeError):
             failures.append({"id": item.get("id", file_path.name), "reason": "unreadable_fits"})
     return {
-        "status": "failed" if failures else "available",
+        "status": "invalid" if failures and checked == 0 else ("failed" if failures else "available"),
         "files_checked": checked,
         "failures": failures,
         "privacy": "private paths and FITS content are omitted from this report; only manifest IDs and failure classes are recorded",
@@ -74,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 2 if report["status"] == "failed" else 0
+    return 2 if report["status"] in {"failed", "invalid"} else 0
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from src.stage1_benchmark import (
     BENCHMARK_SCHEMA_VERSION,
-    EngineeringBudget,
+    compare_allocation_scaling,
     compare_numerical_arrays,
     compare_performance,
 )
@@ -59,6 +59,8 @@ def _run_worker(
             mode,
             "--output",
             str(output),
+            "--arrays-output",
+            str(output.with_suffix(".npz")),
         ]
         completed = subprocess.run(
             command,
@@ -115,17 +117,67 @@ def _performance_input(records: list[dict[str, Any]]) -> dict[str, list[float]]:
     }
 
 
-def _numerical_check(records: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    reference = np.asarray(records["base"][0]["numerical"], dtype=np.float64)
-    comparisons = [
-        compare_numerical_arrays(reference, np.asarray(record["numerical"], dtype=np.float64))
-        for side in ("base", "head")
-        for record in records[side]
-    ]
+def _load_numerical_arrays(record: dict[str, Any], output_dir: Path) -> dict[str, np.ndarray]:
+    """Load and checksum one worker's complete persisted numerical outputs."""
+
+    metadata = record.get("numerical_arrays")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("file"), str):
+        raise ValueError("worker record lacks complete numerical-array metadata")
+    path = output_dir / metadata["file"]
+    if not path.is_file():
+        raise ValueError(f"worker numerical arrays are missing: {path.name}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != metadata.get("sha256"):
+        raise ValueError(f"worker numerical-array checksum mismatch: {path.name}")
+    with np.load(path, allow_pickle=False) as payload:
+        expected = tuple(metadata.get("keys", ()))
+        if not expected or set(payload.files) != set(expected):
+            raise ValueError(f"worker numerical-array keys mismatch: {path.name}")
+        return {key: np.asarray(payload[key], dtype=np.float64) for key in expected}
+
+
+def _numerical_check(
+    records: dict[str, list[dict[str, Any]]],
+    output_dir: Path,
+    *,
+    reference_record: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare complete arrays for every base/head sample, not fingerprints alone."""
+
+    try:
+        reference_source = reference_record or records["base"][0]
+        reference = _load_numerical_arrays(reference_source, output_dir)
+        comparisons = []
+        for side in ("base", "head"):
+            for record in records[side]:
+                candidate = _load_numerical_arrays(record, output_dir)
+                if set(candidate) != set(reference):
+                    comparisons.append(
+                        {
+                            "passed": False,
+                            "maximum_absolute_difference": float("inf"),
+                            "maximum_relative_difference": float("inf"),
+                        }
+                    )
+                    continue
+                comparisons.extend(
+                    compare_numerical_arrays(reference[key], candidate[key])
+                    for key in sorted(reference)
+                )
+    except (OSError, ValueError, KeyError) as error:
+        return {
+            "passed": False,
+            "maximum_absolute_difference": None,
+            "maximum_relative_difference": None,
+            "comparisons": 0,
+            "error": str(error),
+        }
+    maximum_absolute = max(float(item["maximum_absolute_difference"]) for item in comparisons)
+    maximum_relative = max(float(item["maximum_relative_difference"]) for item in comparisons)
     return {
         "passed": all(bool(item["passed"]) for item in comparisons),
-        "maximum_absolute_difference": max(float(item["maximum_absolute_difference"]) for item in comparisons),
-        "maximum_relative_difference": max(float(item["maximum_relative_difference"]) for item in comparisons),
+        "maximum_absolute_difference": maximum_absolute if np.isfinite(maximum_absolute) else None,
+        "maximum_relative_difference": maximum_relative if np.isfinite(maximum_relative) else None,
         "comparisons": len(comparisons),
     }
 
@@ -167,6 +219,13 @@ def _write_plot_and_arrays(
             arrays[f"{mode}_{side}_wall_seconds"] = times
             arrays[f"{mode}_{side}_peak_memory_bytes"] = memory
             arrays[f"{mode}_{side}_numerical"] = numerical
+            for sample_index, record in enumerate(samples):
+                try:
+                    complete_outputs = _load_numerical_arrays(record, output_dir)
+                except (OSError, ValueError, KeyError):
+                    complete_outputs = {}
+                for key, value in complete_outputs.items():
+                    arrays[f"{mode}_{side}_{sample_index}_{key}"] = value
             x_values = np.arange(len(times), dtype=float) + 0.08 * side_index
             axes[0].plot(x_values, times, "o-", label=f"{mode} {side}")
             axes[1].plot(x_values, memory / (1024**2), "o-", label=f"{mode} {side}")
@@ -222,12 +281,20 @@ def run_paired(
     }
     needs_confirmation = False
     for mode in ("cold", "warm"):
-        numerical = _numerical_check(initial[mode])
+        numerical = _numerical_check(initial[mode], output_dir)
+        allocation = compare_allocation_scaling(
+            [record.get("allocation_scaling", {}) for record in initial[mode]["base"]],
+            [record.get("allocation_scaling", {}) for record in initial[mode]["head"]],
+        )
         performance = compare_performance(
             _performance_input(initial[mode]["base"]),
             _performance_input(initial[mode]["head"]),
         )
-        report["cases"][mode] = {"numerical": numerical, "performance": performance}
+        report["cases"][mode] = {
+            "numerical": numerical,
+            "allocation": allocation,
+            "performance": performance,
+        }
         needs_confirmation |= performance["status"] == "confirmation_required"
 
     confirmation = None
@@ -242,6 +309,15 @@ def run_paired(
             label="confirmation",
         )
         for mode in ("cold", "warm"):
+            report["cases"][mode]["confirmation_numerical"] = _numerical_check(
+                confirmation[mode],
+                output_dir,
+                reference_record=initial[mode]["base"][0],
+            )
+            report["cases"][mode]["confirmation_allocation"] = compare_allocation_scaling(
+                [record.get("allocation_scaling", {}) for record in confirmation[mode]["base"]],
+                [record.get("allocation_scaling", {}) for record in confirmation[mode]["head"]],
+            )
             report["cases"][mode]["performance"] = compare_performance(
                 _performance_input(initial[mode]["base"]),
                 _performance_input(initial[mode]["head"]),
@@ -254,6 +330,12 @@ def run_paired(
     for mode, case in report["cases"].items():
         if not case["numerical"]["passed"]:
             failures.append(f"{mode}: numerical mismatch")
+        if not case["allocation"]["passed"]:
+            failures.append(f"{mode}: deterministic allocation bound crossed")
+        if not case.get("confirmation_numerical", {"passed": True})["passed"]:
+            failures.append(f"{mode}: confirmation numerical mismatch")
+        if not case.get("confirmation_allocation", {"passed": True})["passed"]:
+            failures.append(f"{mode}: confirmation deterministic allocation bound crossed")
         status = case["performance"]["status"]
         if status == "failed":
             failures.append(f"{mode}: confirmed performance regression")
@@ -305,7 +387,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(failure, indent=2, sort_keys=True))
         return 2
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
-    return 0 if report["status"] in {"passed", "inconclusive"} else 3
+    if report["status"] == "passed":
+        return 0
+    return 4 if report["status"] == "inconclusive" else 3
 
 
 if __name__ == "__main__":

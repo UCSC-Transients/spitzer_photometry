@@ -34,6 +34,19 @@ def test_missing_private_manifest_is_explicit_and_nonfatal(tmp_path):
     assert report["files_checked"] == 0
 
 
+def test_empty_or_invalid_manifest_cannot_report_available(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    for name, content in (("empty.json", '{"files": []}'), ("invalid.json", "not-json")):
+        manifest = tmp_path / name
+        manifest.write_text(content)
+        output = tmp_path / f"{name}.status.json"
+        completed = _run(root, output, "--manifest", str(manifest))
+        assert completed.returncode != 0
+        report = json.loads(output.read_text())
+        assert report["status"] == "invalid"
+        assert report["files_checked"] == 0
+
+
 def test_checksum_verified_real_fits_smoke_omits_private_path(tmp_path):
     root = Path(__file__).resolve().parents[1]
     private_dir = tmp_path / "private-inputs"

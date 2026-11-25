@@ -33,7 +33,13 @@ def _wcs(n_pix: int, roll_deg: float, pixel_scale_arcsec: float) -> WCS:
     return result
 
 
-def run_sample(repo: Path, mode: str, iterations: int, seed: int) -> dict[str, object]:
+def run_sample(
+    repo: Path,
+    mode: str,
+    iterations: int,
+    seed: int,
+    arrays_output: Path,
+) -> dict[str, object]:
     """Benchmark the pre-Stage-1 frame operator shared by base and head trees."""
 
     sys.path.insert(0, str(repo))
@@ -125,6 +131,13 @@ def run_sample(repo: Path, mode: str, iterations: int, seed: int) -> dict[str, o
         dtype=np.float64,
     )
     numerical_hash = hashlib.sha256(numerical.tobytes()).hexdigest()
+    arrays_output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        arrays_output,
+        forward=np.asarray(forward, dtype=np.float64),
+        adjoint=np.asarray(adjoint, dtype=np.float64),
+    )
+    arrays_hash = hashlib.sha256(arrays_output.read_bytes()).hexdigest()
     input_digest = hashlib.sha256()
     for value in (scene, probe, synthetic_prf):
         input_digest.update(np.ascontiguousarray(value).tobytes())
@@ -148,7 +161,7 @@ def run_sample(repo: Path, mode: str, iterations: int, seed: int) -> dict[str, o
         n_science_epochs=2,
     )
     return {
-        "schema_version": "stage1-benchmark-v1",
+        "schema_version": "stage1-benchmark-v2",
         "mode": mode,
         "repo_head": _read_head(repo),
         "runner": {
@@ -186,6 +199,14 @@ def run_sample(repo: Path, mode: str, iterations: int, seed: int) -> dict[str, o
         "tracemalloc_peak_bytes": traced_peak,
         "numerical": numerical.tolist(),
         "numerical_sha256": numerical_hash,
+        "numerical_arrays": {
+            "file": arrays_output.name,
+            "sha256": arrays_hash,
+            "keys": ["forward", "adjoint"],
+            "forward_shape": list(forward.shape),
+            "adjoint_shape": list(adjoint.shape),
+            "dtype": "float64",
+        },
     }
 
 
@@ -226,8 +247,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--seed", type=int, default=81073)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--arrays-output", type=Path)
     arguments = parser.parse_args(argv)
-    result = run_sample(arguments.repo.resolve(), arguments.mode, arguments.iterations, arguments.seed)
+    arrays_output = (
+        arguments.arrays_output.resolve()
+        if arguments.arrays_output is not None
+        else arguments.output.resolve().with_suffix(".npz")
+    )
+    result = run_sample(
+        arguments.repo.resolve(),
+        arguments.mode,
+        arguments.iterations,
+        arguments.seed,
+        arrays_output,
+    )
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n")
     print(json.dumps(result, sort_keys=True, allow_nan=False))

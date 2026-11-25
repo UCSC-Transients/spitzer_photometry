@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 
-BENCHMARK_SCHEMA_VERSION = "stage1-benchmark-v1"
+BENCHMARK_SCHEMA_VERSION = "stage1-benchmark-v2"
 MIB = 1024 * 1024
 
 
@@ -20,6 +20,8 @@ class EngineeringBudget:
     memory_fraction: float = 0.20
     memory_absolute_bytes: int = 20 * MIB
     maximum_relative_mad: float = 0.10
+    allocation_fraction: float = 0.20
+    maximum_allocation_growth_ratio: float = 12.0
 
 
 def summarize_samples(samples: list[float]) -> dict[str, float | list[float]]:
@@ -104,13 +106,99 @@ def compare_performance(
     result["confirmation"] = confirm
     confirmed_time = time_suspect and bool(confirm["time_suspect"])
     confirmed_memory = memory_suspect and bool(confirm["memory_suspect"])
+    new_time_suspect = not time_suspect and bool(confirm["time_suspect"])
+    new_memory_suspect = not memory_suspect and bool(confirm["memory_suspect"])
     if noisy or bool(confirm["noisy"]):
         result.update(status="inconclusive", reason="initial or confirming paired samples are too noisy")
     elif confirmed_time or confirmed_memory:
         result.update(status="failed", reason="controlled regression crossed the budget on both paired runs")
+    elif new_time_suspect or new_memory_suspect:
+        result.update(
+            status="inconclusive",
+            reason="a new budget crossing appeared only in confirmation and remains unconfirmed",
+        )
     else:
         result.update(status="passed", reason="suspected regression was not reproduced by the confirming rerun")
     return result
+
+
+def compare_allocation_scaling(
+    base: list[dict[str, Any]],
+    head: list[dict[str, Any]],
+    *,
+    budget: EngineeringBudget = EngineeringBudget(),
+) -> dict[str, Any]:
+    """Enforce deterministic allocation-growth and base/head scaling bounds.
+
+    Estimated allocation sizes are deterministic properties of the fixed workload,
+    so they are gated directly rather than subjected to noisy timing confirmation.
+    """
+
+    if not base or not head:
+        return {"passed": False, "reason": "allocation records are missing", "budget": budget.__dict__}
+    required = {
+        "small_scene_shape",
+        "large_scene_shape",
+        "small_estimated_peak_bytes",
+        "large_estimated_peak_bytes",
+        "peak_growth_ratio",
+        "small_parameter_count",
+        "large_parameter_count",
+    }
+    records = base + head
+    if any(not required.issubset(record) for record in records):
+        return {"passed": False, "reason": "allocation record is incomplete", "budget": budget.__dict__}
+
+    reference = base[0]
+    structural_keys = (
+        "small_scene_shape",
+        "large_scene_shape",
+        "small_parameter_count",
+        "large_parameter_count",
+    )
+    structure_matches = all(
+        all(record[key] == reference[key] for key in structural_keys) for record in records
+    )
+    try:
+        base_large = np.asarray(
+            [record["large_estimated_peak_bytes"] for record in base], dtype=np.float64
+        )
+        head_large = np.asarray(
+            [record["large_estimated_peak_bytes"] for record in head], dtype=np.float64
+        )
+        growth = np.asarray([record["peak_growth_ratio"] for record in records], dtype=np.float64)
+    except (TypeError, ValueError):
+        return {"passed": False, "reason": "allocation values are invalid", "budget": budget.__dict__}
+    finite_positive = all(
+        values.size > 0 and np.isfinite(values).all() and np.all(values > 0.0)
+        for values in (base_large, head_large, growth)
+    )
+    base_median = float(np.median(base_large)) if finite_positive else None
+    maximum_head = float(np.max(head_large)) if finite_positive else None
+    maximum_growth = float(np.max(growth)) if finite_positive else None
+    head_fraction = maximum_head / base_median - 1.0 if finite_positive else None
+    passed = bool(
+        structure_matches
+        and finite_positive
+        and head_fraction is not None
+        and head_fraction <= budget.allocation_fraction
+        and maximum_growth is not None
+        and maximum_growth <= budget.maximum_allocation_growth_ratio
+    )
+    return {
+        "passed": passed,
+        "reason": (
+            "deterministic allocation bounds satisfied"
+            if passed
+            else "deterministic allocation or workload-structure bound crossed"
+        ),
+        "structure_matches": structure_matches,
+        "base_large_median_bytes": base_median,
+        "head_large_maximum_bytes": maximum_head,
+        "head_large_fractional_growth": head_fraction,
+        "maximum_peak_growth_ratio": maximum_growth,
+        "budget": budget.__dict__,
+    }
 
 
 def compare_numerical_arrays(

@@ -61,6 +61,28 @@ def test_training_leverage_and_heldout_predictive_variance_are_distinct():
     assert metrics["whiteness"]["lag_x_correlation"] == pytest.approx(-1.0)
 
 
+def test_residual_metrics_preserve_caller_masks():
+    residual = np.asarray([[0.0, np.nan], [1.0, 2.0]])
+    sigma = np.ones((2, 2))
+    train = np.asarray([[True, True], [False, False]])
+    heldout = np.asarray([[False, False], [True, True]])
+    original_train = train.copy()
+    original_heldout = heldout.copy()
+    residual_metrics(residual, sigma, training_mask=train, heldout_mask=heldout)
+    assert np.array_equal(train, original_train)
+    assert np.array_equal(heldout, original_heldout)
+
+
+def test_residual_metrics_reject_overlapping_support():
+    with pytest.raises(ValueError, match="must not overlap"):
+        residual_metrics(
+            np.ones(4),
+            np.ones(4),
+            training_mask=np.asarray([True, True, False, False]),
+            heldout_mask=np.asarray([False, True, True, False]),
+        )
+
+
 def test_zero_flux_coverage_is_not_reported_as_a_symmetric_pull():
     metrics = interval_coverage_metrics(
         np.asarray([0.0, 0.0, 1.0, 1.0]),
