@@ -62,3 +62,7 @@ Full suite including slower integration-style cases:
 ```bash
 pytest --tb=short
 ```
+
+The shared deterministic fixture, metric/artifact, paired performance, and
+manual real-data-status contracts are documented in
+[`docs/STAGE1_VALIDATION_INTERFACE.md`](docs/STAGE1_VALIDATION_INTERFACE.md).
