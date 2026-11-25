@@ -22,6 +22,7 @@ from reproject import reproject_interp
 from . import config, gp_model
 from .pmap_correction import iracpc_pmap_corr
 from .instrument import frame_channel
+from .point_response import file_identity, sample_native_response
 
 # Spitzer BCD headers often list both CD and CDELT; Astropy prefers CD and
 # emits repetitive "cdelt ignored" warnings whenever the WCS is inspected.
@@ -40,7 +41,7 @@ GRID_CENTERS = np.array([25, 77, 129, 181, 233])
 
 
 @lru_cache(maxsize=8)
-def _read_fits_image_cached(path, modified_ns, file_size):
+def _read_fits_image_cached(path, modified_ns, file_size, identity=None):
     """Load primary HDU data; ignore common SSC-style END-card header noise."""
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=AstropyWarning)
@@ -54,7 +55,7 @@ def _read_fits_image_cached(path, modified_ns, file_size):
 def _read_fits_image_array(path):
     path = os.path.realpath(path)
     stat = os.stat(path)
-    return _read_fits_image_cached(path, stat.st_mtime_ns, stat.st_size)
+    return _read_fits_image_cached(path, stat.st_mtime_ns, stat.st_size, file_identity(path))
 
 def get_gaussian_kernel_array(size=2001, fwhm=2.0, oversample=100):
     y, x = np.mgrid[0:size, 0:size]
@@ -187,7 +188,8 @@ def _directory_calibration_fingerprint(path: str) -> tuple:
         except OSError:
             identity.append((name, 'unavailable'))
         else:
-            identity.append((name, int(stat.st_mtime_ns), int(stat.st_size)))
+            identity.append((name, int(stat.st_dev), int(stat.st_ino), int(stat.st_ctime_ns),
+                             int(stat.st_mtime_ns), int(stat.st_size)))
     return (root, tuple(identity))
 
 
@@ -197,12 +199,14 @@ def _prf_cache_fingerprint_cached(
     settings: tuple,
     prf_dir: str,
     pmap_dir: str,
+    prf_identity: tuple,
+    pmap_identity: tuple,
 ) -> tuple:
     return (
         str(channel).lower(),
         settings,
-        _directory_calibration_fingerprint(prf_dir),
-        _directory_calibration_fingerprint(pmap_dir),
+        prf_identity,
+        pmap_identity,
     )
 
 
@@ -227,6 +231,8 @@ def _prf_cache_fingerprint(channel: str) -> tuple:
         settings,
         str(getattr(config, 'PRF_DIR', '')),
         str(getattr(config, 'PMAP_DIR', '')),
+        _directory_calibration_fingerprint(getattr(config, 'PRF_DIR', '')),
+        _directory_calibration_fingerprint(getattr(config, 'PMAP_DIR', '')),
     )
 
 
@@ -1133,8 +1139,9 @@ def native_point_source_column(scene_wcs, native_wcs, scene_shape, native_shape,
     """Sample the detector-integrated PRF directly, independently of the GP grid.
 
     IRAC PRFs already include detector sampling (IRAC handbook section 4.9).
-    The integral of the calibration table defines unit flux; cropping never
-    renormalizes missing wings. scene_* arguments retain the renderer interface.
+    The integral of the calibration table defines the legacy amplitude gauge;
+    it is NOT verified as the published aperture-calibrated Jy convention.
+    Cropping never renormalizes missing wings. scene_* retain the interface.
     """
     detector_wcs = getattr(native_wcs, '_detector_wcs', native_wcs)
     dx, dy = detector_wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
@@ -1144,10 +1151,7 @@ def native_point_source_column(scene_wcs, native_wcs, scene_shape, native_shape,
     if not np.isfinite(normalization) or normalization <= 0:
         raise ValueError('PRF must have positive finite integrated response')
     x, y = native_wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
-    yy, xx = np.indices(native_shape, dtype=float)
-    coords = [(prf.shape[0] - 1) / 2 + (yy - float(y)) * oversample,
-              (prf.shape[1] - 1) / 2 + (xx - float(x)) * oversample]
-    response = map_coordinates(prf, coords, order=1, mode='constant', cval=0.) / normalization
+    response = sample_native_response(prf, native_shape, float(x), float(y), oversample, normalization)
     if bool(getattr(config, 'PRF_APPLY_PMAP_GAIN', False)):
         correction = iracpc_pmap_corr(1., dx, dy, channel, pmap_dir=config.PMAP_DIR,
                                       threshold_occ=False, full_array=is_full_array)
