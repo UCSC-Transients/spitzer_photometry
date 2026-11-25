@@ -93,16 +93,32 @@ def gp_fixture(*, seed: int = 1729, flux: float = .002, separation: float = 2.,
     nucleus = to_ref([4., 4.])
     star = to_ref([4.+separation, 4.2])
     response = synthetic_integrated_prf()
+    optical_native = np.eye(2)*.78**2
+    # Preserve the original zero-roll, optical-convolved widths (native pixels).
+    # Remove the isotropic optical covariance once to define intrinsic sky
+    # morphology, then express that covariance in reference pixels (SR**2).
+    host_components = (
+        (to_ref([3.6, 4.4]), (np.eye(2)*5.**2-optical_native)*sr**2, .025),
+        (to_ref([5.7, 2.5]), (np.diag([1.8, 3.])**2-optical_native)*sr**2, .003*gradient),
+    )
     rng = np.random.default_rng(seed)
     frames = []
     truth_host, truth_star, truth_nucleus = [], [], []
     for i, native in enumerate(natives):
-        def project(p):
+        def project(p: np.ndarray) -> np.ndarray:
             return np.asarray(native.world_to_pixel_values(*reference.pixel_to_world_values(*p)))
         center = project(nucleus)
         # Positive broad asymmetric mixture, outside the GP's fitted family.
-        host = integrated_gaussian((9, 9), project(to_ref([3.6, 4.4])), np.eye(2)*5.**2, .025)
-        host += integrated_gaussian((9, 9), project(to_ref([5.7, 2.5])), np.diag([1.8, 3.])**2, .003*gradient)
+        host = np.zeros((9, 9))
+        for position, intrinsic_reference, component_flux in host_components:
+            # Local reference-to-native WCS Jacobian, with a fixed angular
+            # differencing step. The fixture's common-tangent TAN map is affine;
+            # this is not a general distorted extended-profile integrator.
+            step = 1e-3*sr
+            jacobian = np.column_stack([(project(position+d)-project(position-d))/(2*step)
+                                        for d in np.eye(2)*step])
+            covariance_native = jacobian@intrinsic_reference@jacobian.T+optical_native
+            host += integrated_gaussian((9, 9), project(position), covariance_native, component_flux)
         nucleus_image = integrated_gaussian((9, 9), center, np.eye(2)*(.78**2+nucleus_width**2), .004)
         star_image = integrated_gaussian((9, 9), project(star+np.array([position_offset*sr, 0.])), np.eye(2)*.78**2,
                                          flux+(.002 if contaminated and i == 0 else 0))

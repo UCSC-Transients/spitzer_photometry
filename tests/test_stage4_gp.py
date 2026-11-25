@@ -157,6 +157,47 @@ def test_native_design_units_masks_and_geometry(sr):
                         nucleus_xy=nucleus, operator_provenance='test')
 
 
+@pytest.mark.parametrize('sr', [1, 2, 4])
+@pytest.mark.parametrize('phase', [-.37, .17, .43])
+def test_injected_host_is_fixed_on_sky_across_roll_phase_and_sr(sr: int, phase: float) -> None:
+    """Pull detector quadrature points back to one analytic sky, independently.
+
+    The fixture uses WCS covariance transport and its own pixel integrator. This
+    oracle instead uses the declared rolls/dithers and evaluates fixed sky
+    densities directly, without either renderer or a WCS-derived covariance.
+    Widths are the original optical-convolved widths at 1.22 arcsec/pixel;
+    the isotropic .78-pixel detector optics commute with these pure rotations.
+    """
+    fixture = gp_fixture(sr=sr, phase=phase, gradient=2., masked=True)
+    truth = fixture[-1]
+    nodes, weights = np.polynomial.legendre.leggauss(16)
+    yy, xx = np.indices((9, 9))
+    detector = np.stack(np.broadcast_arrays(xx[..., None, None]+nodes[None, None, :, None]/2,
+                                           yy[..., None, None]+nodes[None, None, None, :]/2), axis=-1)
+
+    def integrate(points: np.ndarray, center: np.ndarray, widths: np.ndarray, flux: float) -> np.ndarray:
+        density = flux*np.exp(-.5*np.sum(((points-center)/widths)**2, axis=-1))/(2*np.pi*np.prod(widths))
+        return np.einsum('ijab,a,b->ij', density, weights, weights)/4
+
+    for i, roll in enumerate((0, 31, 79, 47, 137)):
+        angle = np.deg2rad(roll)
+        rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+        native_origin = np.array([4.+phase+.11*i, 4.-.13*i])
+        # Same TAN tangent point and native angular scale: a rigid sky pullback.
+        sky = (detector-native_origin)@rotation.T+4.
+        expected = integrate(sky, np.array([3.6, 4.4]), np.array([5., 5.]), .025)
+        expected += integrate(sky, np.array([5.7, 2.5]), np.array([1.8, 3.]), .006)
+        np.testing.assert_allclose(truth['host'][i], expected, rtol=1e-7, atol=1e-12)
+        # Optical point-source images stay native and unchanged by reference SR.
+        star_center = native_origin+rotation.T@np.array([2., .2])
+        np.testing.assert_allclose(truth['star'][i],
+                                   integrate(detector, star_center, np.array([.78, .78]), .002),
+                                   rtol=1e-7, atol=1e-12)
+        np.testing.assert_allclose(truth['nucleus'][i],
+                                   integrate(detector, native_origin, np.array([.78, .78]), .004),
+                                   rtol=1e-7, atol=1e-12)
+
+
 def test_small_independent_leakage_and_template_contamination(tmp_path):
     fits, records = [], []
     for flux in (.001, .003):

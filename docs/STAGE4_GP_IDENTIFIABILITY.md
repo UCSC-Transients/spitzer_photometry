@@ -137,6 +137,26 @@ Host transfer is the fitted host's point-response projection in the native noise
 metric, not its integrated flux over the entire footprint. Transfer slopes may be
 signed even though every physical component amplitude remains nonnegative.
 
+The RV26-01 follow-up corrects an unintended exposure-dependent host: previously
+only the asymmetric Gaussian's center followed the sky WCS, while its ellipse
+remained detector-fixed. Both host components now have fixed intrinsic covariance
+in the reference frame. If `C0` is the original optical-convolved covariance in
+native-equivalent reference pixels and `O = 0.78**2 I` is the synthetic detector
+optics, the intrinsic reference covariance is `SR**2 (C0 - O)`. Each exposure uses
+`J C_intrinsic J.T + O`, where `J` is the local reference-to-native WCS Jacobian.
+Thus the original zero-roll widths (5/5 and 1.8/3 native pixels), integrated fluxes
+and detector optics are preserved; no extra blur is introduced. Only intrinsic
+sky morphology is transported. A fixed angular differencing step is used for J.
+The common-tangent, undistorted TAN fixture makes this affine transport exact
+apart from numerical precision; distorted extended profiles remain untested.
+
+The independent regression evaluates fixed-sky Gaussian densities at detector
+quadrature points using the declared rolls and dithers, without the fixture's
+WCS Jacobian or Gaussian renderer. It covers all five rolls, three phases and
+SR=1/2/4, including the steep host and unchanged optical point sources. All nine
+phase/SR cases fail on reviewed head `40cba57863c98f5d28e3bb8bcd7502255aa14e75`
+and pass after correction. Priors, masks, noise, fluxes and gates are unchanged.
+
 The required quick CI run uses the same physical/noise cases with fewer seeds and
 grid cells; it includes the near-nucleus and masked/few-template cases. The full
 experiment has 72 candidate fits plus 192 injection fits. Repeated flux levels use
@@ -149,6 +169,30 @@ All 72 scale/model candidates with the deliberately small 9x9 host footprint fla
 strong model mismatch, including the separated-source case. The contributions
 of finite support, prior restrictions and inherited operator approximations have
 not been isolated. These results are not validated host recovery.
+
+After RV26-01, the regenerated full experiment still completes 264 fits without
+numerical failure; 72/72 sweep fits and 144/192 injections flag mismatch. At scales
+1.22/4.88 arcsec, the 2 mJy separated-source mean bias changes from +119.97/+61.85
+to +122.63/+64.30 microJy, and mean held-out log predictive density changes from
+578.27/576.69 to 581.32/579.66. For the steep host, bias changes from
++363.63/+104.93 to +397.81/+137.65 microJy; held-out scores change from
+318.58/317.66 to 421.92/418.83. These are means over the same three seeds, with
+all fluxes, priors, masks and noise retained. Improved held-out scores do not imply
+smaller source bias: steep-host positive interval coverage at 4.88 arcsec falls
+from 9/9 to 3/9. The contaminated 4.88-arcsec bias is +575.05 microJy with 0/9
+coverage. These are adverse scientific results, not reasons to weaken a gate.
+
+Corrected separated-source recovery slopes are 0.9894 [0.9703, 1.0086] and
+0.9959 [0.9906, 1.0013]; brackets remain small-N descriptive 95% t intervals,
+not validated coverage. The original evidence is retained in the author's
+`published-evidence/` bundle and superseded by `rv26-01/full/`; regenerated public
+JSON/SVG below use the corrected fixture. The paired `rv26-01/comparison.json`
+records every held-out score (including Monte Carlo intervals), bias comparison,
+and input checksum. Its 912 design/noise/star/nucleus arrays are exactly unchanged;
+the largest discrepancy between native-data change and host change is
+2.71e-19 Jy. Thus the comparison isolates host orientation rather than altering
+experimental difficulty. The review finding is accepted without disagreement.
+
 SR=1/2/4 tests check sky-coordinate-unit invariance with fixed angular GP knots;
 they **do not** certify fine-grid or footprint convergence. Full supported volume,
 larger footprints and true fine-grid convergence remain Stage 5/acceptance work.
