@@ -47,6 +47,8 @@ jobs:
         run: python scripts/validate_stage2.py --output-dir test-results/stage2-validation
       - name: Stage 4 positive-GP leakage and uncertainty artifacts
         run: python scripts/validate_stage4.py --quick --draws 4096 --output-dir test-results/stage4-validation
+      - name: Stage 5 dense-scalable positive-posterior equivalence
+        run: python scripts/validate_stage5.py --quick --draws 4096 --output-dir test-results/stage5-validation
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -85,6 +87,16 @@ jobs:
           --output-dir benchmark-results
           --repeats 5
           --timeout 45
+      - name: Paired Stage 5 positive-posterior consumers
+        run: >-
+          python head/scripts/run_stage5_benchmarks.py
+          --base-repo base
+          --head-repo head
+          --output-dir benchmark-results/stage5
+          --cases small native9
+          --repeats 5
+          --draws 1024
+          --timeout 180
       - name: Upload paired benchmark evidence
         if: always()
         uses: actions/upload-artifact@v4
