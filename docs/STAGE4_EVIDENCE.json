@@ -1,0 +1,4284 @@
+{
+  "truth": "independent analytic synthetic optics; not real IRAC validation",
+  "config": {
+    "draws": 16384,
+    "seeds": [
+      1729,
+      2718,
+      31415
+    ],
+    "scales_arcsec": [
+      1.22,
+      2.44,
+      4.88
+    ],
+    "amplitudes_jy_per_native_pixel": [
+      2.5e-05,
+      7.5e-05
+    ],
+    "source_prior_sigma_jy": 0.01,
+    "host_mean_jy_per_native_pixel": 0.00012,
+    "numerical_threads": 1
+  },
+  "summaries": [
+    {
+      "scenario": "separated",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9809941425251504,
+            0.9911186452315686,
+            0.9961265525226635
+          ],
+          "mean": 0.9894131134264609,
+          "descriptive_95": [
+            0.9702628303701898,
+            1.0085633964827319
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.018859211280476792,
+            0.008842446580508716,
+            0.003884777859261287
+          ],
+          "mean": 0.010528811906748932,
+          "descriptive_95": [
+            -0.008420988585860007,
+            0.02947861239935787
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.0014458357693792397,
+            -0.0007139498090452513,
+            -0.00030406127518473974
+          ],
+          "mean": -0.0008212822845364102,
+          "descriptive_95": [
+            -0.0022581201726447663,
+            0.0006155556035719458
+          ]
+        }
+      },
+      "bias_mean": 0.00013833598612925427,
+      "rmse": 0.00015937471372399098,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "separated",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9934847550713253,
+            0.9976064408990307,
+            0.9966687052654736
+          ],
+          "mean": 0.9959199670786099,
+          "descriptive_95": [
+            0.9905531198267604,
+            1.0012868143304592
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.006083793773798615,
+            0.002257424444224908,
+            0.0031246745331515464
+          ],
+          "mean": 0.00382196425039169,
+          "descriptive_95": [
+            -0.001161772777899152,
+            0.008805701278682533
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.001638688106736508,
+            -0.0005796606743876634,
+            -0.0008141839663007423
+          ],
+          "mean": -0.001010844249141638,
+          "descriptive_95": [
+            -0.0023925948574390664,
+            0.00037090635915579045
+          ]
+        }
+      },
+      "bias_mean": 7.047089118181814e-05,
+      "rmse": 7.485831269251845e-05,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "near_nucleus",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9434576639861356,
+            0.9278574660395507,
+            0.9860225558236241
+          ],
+          "mean": 0.9524458952831035,
+          "descriptive_95": [
+            0.8776578509204847,
+            1.0272339396457224
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.004664025163090795,
+            0.005866609205096923,
+            0.001090520609241609
+          ],
+          "mean": 0.0038737183258097754,
+          "descriptive_95": [
+            -0.002297348879180076,
+            0.010044785530799627
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            0.05309577906064057,
+            0.06781419863230105,
+            0.013200083281379053
+          ],
+          "mean": 0.0447033536581069,
+          "descriptive_95": [
+            -0.02549276973057587,
+            0.11489947704678966
+          ]
+        }
+      },
+      "bias_mean": 0.00017426978139785496,
+      "rmse": 0.0002900161606085255,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "near_nucleus",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9776952034683358,
+            0.9591684536451787,
+            0.9950275427253611
+          ],
+          "mean": 0.9772970666129585,
+          "descriptive_95": [
+            0.9327493738912186,
+            1.0218447593346984
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.0017167915771484333,
+            0.0033521309283770467,
+            0.0003346197456917658
+          ],
+          "mean": 0.0018011807504057485,
+          "descriptive_95": [
+            -0.0019511703866510247,
+            0.0055535318874625214
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            0.020740833811708333,
+            0.03781825183025942,
+            0.0046972579531640146
+          ],
+          "mean": 0.021085447865043922,
+          "descriptive_95": [
+            -0.02005978691796938,
+            0.06223068264805723
+          ]
+        }
+      },
+      "bias_mean": 8.350136564751842e-05,
+      "rmse": 0.0001735824651328578,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "masked_few_templates",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9802073416134801,
+            0.9782325251570948,
+            0.9878827348114011
+          ],
+          "mean": 0.9821075338606587,
+          "descriptive_95": [
+            0.9694433801871365,
+            0.994771687534181
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.01931750926436687,
+            0.021292521044447184,
+            0.011838710525750872
+          ],
+          "mean": 0.01748291361152164,
+          "descriptive_95": [
+            0.005095074202978476,
+            0.029870753020064807
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.003606204734109815,
+            -0.004292874494080806,
+            -0.0021565827783252833
+          ],
+          "mean": -0.0033518873355053015,
+          "descriptive_95": [
+            -0.006061128033067154,
+            -0.0006426466379434496
+          ]
+        }
+      },
+      "bias_mean": 8.671593956008853e-05,
+      "rmse": 0.00010581940989266989,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "masked_few_templates",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9860039926135932,
+            0.985076253933291,
+            0.9952101588892921
+          ],
+          "mean": 0.9887634684787253,
+          "descriptive_95": [
+            0.9748467450884386,
+            1.002680191869012
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.011838124832959297,
+            0.012673693297485814,
+            0.004062733863882124
+          ],
+          "mean": 0.009524850664775745,
+          "descriptive_95": [
+            -0.002271687063205713,
+            0.021321388392757202
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.003719235418741814,
+            -0.0038714787142451407,
+            -0.0012399535166754405
+          ],
+          "mean": -0.0029435558832207986,
+          "descriptive_95": [
+            -0.006613435567444743,
+            0.0007263238010031463
+          ]
+        }
+      },
+      "bias_mean": 3.9187596758313984e-05,
+      "rmse": 6.64783922243502e-05,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "steep_host",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9980877107793514,
+            0.9996112033443609,
+            0.9998749255001023
+          ],
+          "mean": 0.999191279874605,
+          "descriptive_95": [
+            0.9967946522166612,
+            1.001587907532549
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.0019582860910075726,
+            0.0004335345323243271,
+            0.00016973823627072397
+          ],
+          "mean": 0.0008538529532008746,
+          "descriptive_95": [
+            -0.0015446286902614627,
+            0.003252334596663212
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.00017558421059331002,
+            -3.9448129650960296e-05,
+            -9.933391393964086e-06
+          ],
+          "mean": -7.49885772127448e-05,
+          "descriptive_95": [
+            -0.00029448559989929255,
+            0.00014450844547380298
+          ]
+        }
+      },
+      "bias_mean": 0.00039893500516246177,
+      "rmse": 0.00040737229266193237,
+      "positive_coverage_count": 3,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "steep_host",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9983067615870947,
+            0.9997475661960114,
+            0.9994775746252578
+          ],
+          "mean": 0.999177300802788,
+          "descriptive_95": [
+            0.9972746998159346,
+            1.0010799017896415
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.001627714403959595,
+            0.00027624414670252625,
+            0.0005235482469506901
+          ],
+          "mean": 0.0008091689325376038,
+          "descriptive_95": [
+            -0.0009783789124409646,
+            0.002596716777516172
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.00048040841170264586,
+            -9.173738617015982e-05,
+            -0.00014502428018357981
+          ],
+          "mean": -0.00023905669268546183,
+          "descriptive_95": [
+            -0.0007624843887785807,
+            0.00028437100340765714
+          ]
+        }
+      },
+      "bias_mean": 0.0001389600413584971,
+      "rmse": 0.0001410655959764205,
+      "positive_coverage_count": 3,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "offset_star",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9556778119223771,
+            0.9585951356757637,
+            0.9701515600120836
+          ],
+          "mean": 0.9614748358700748,
+          "descriptive_95": [
+            0.9424599257707058,
+            0.9804897459694437
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.03598033510521618,
+            0.03490318173558766,
+            0.021793268133945543
+          ],
+          "mean": 0.030892261658249792,
+          "descriptive_95": [
+            0.011271689154903994,
+            0.05051283416159559
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.004103561277257982,
+            -0.010890060405313364,
+            -0.003496260971311514
+          ],
+          "mean": -0.006163294217960954,
+          "descriptive_95": [
+            -0.016360049350538804,
+            0.004033460914616896
+          ]
+        }
+      },
+      "bias_mean": 9.463993968447232e-05,
+      "rmse": 0.00013571877799576016,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "offset_star",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9661169803172385,
+            0.970238666144945,
+            0.9693009305113995
+          ],
+          "mean": 0.9685521923245277,
+          "descriptive_95": [
+            0.9631853450726717,
+            0.9739190395763837
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.025991688386746283,
+            0.022165319057165636,
+            0.023032569146089144
+          ],
+          "mean": 0.02372985886333369,
+          "descriptive_95": [
+            0.018746121835031777,
+            0.0287135958916356
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.007444388447996732,
+            -0.00638536101563825,
+            -0.006619884307568869
+          ],
+          "mean": -0.006816544590401284,
+          "descriptive_95": [
+            -0.008198295198704521,
+            -0.005434793982098047
+          ]
+        }
+      },
+      "bias_mean": 2.5998257206432985e-05,
+      "rmse": 6.056700720183337e-05,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "contaminated",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9564791164923648,
+            0.9724351974539742,
+            0.9821884022263784
+          ],
+          "mean": 0.9703675720575724,
+          "descriptive_95": [
+            0.9381265508054643,
+            1.0026085933096807
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.04314532672176262,
+            0.027376713836630154,
+            0.017670276103967007
+          ],
+          "mean": 0.029397438887453258,
+          "descriptive_95": [
+            -0.002541563990709903,
+            0.06133644176561642
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.003789964408839238,
+            -0.002421425585772296,
+            -0.0012875893082235444
+          ],
+          "mean": -0.002499659767611693,
+          "descriptive_95": [
+            -0.005612335595203527,
+            0.0006130160599801412
+          ]
+        }
+      },
+      "bias_mean": -2.59376493163955e-05,
+      "rmse": 0.00010754559527377945,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "contaminated",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            1.0000791773841338,
+            1.0000791773841224,
+            1.0000791773841322
+          ],
+          "mean": 1.0000791773841295,
+          "descriptive_95": [
+            1.0000791773841142,
+            1.0000791773841449
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            -3.157115859020454e-05,
+            -3.157115858798795e-05,
+            -3.157115859304756e-05
+          ],
+          "mean": -3.157115859041335e-05,
+          "descriptive_95": [
+            -3.157115859671377e-05,
+            -3.157115858411293e-05
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -1.4172683311374872e-05,
+            -1.417268331706091e-05,
+            -1.4172683302604881e-05
+          ],
+          "mean": -1.4172683310346888e-05,
+          "descriptive_95": [
+            -1.4172683328437953e-05,
+            -1.4172683292255822e-05
+          ]
+        }
+      },
+      "bias_mean": 0.0005750200430345988,
+      "rmse": 0.0005755651874908571,
+      "positive_coverage_count": 0,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "resolved_nucleus",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9880399092252592,
+            0.9954463310977096,
+            0.9983679948966312
+          ],
+          "mean": 0.9939514117398667,
+          "descriptive_95": [
+            0.9807262241010226,
+            1.0071765993787107
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.011900706905848595,
+            0.004544113332051825,
+            0.0016578309884185175
+          ],
+          "mean": 0.0060342170754396456,
+          "descriptive_95": [
+            -0.007085801258834262,
+            0.019154235409713553
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.0009979725235966428,
+            -0.00037851282600605355,
+            -0.00012562467706222816
+          ],
+          "mean": -0.0005007033422216415,
+          "descriptive_95": [
+            -0.0016156511618824767,
+            0.0006142444774391939
+          ]
+        }
+      },
+      "bias_mean": 0.00020736485132811348,
+      "rmse": 0.00022183975753760143,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "resolved_nucleus",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.99490528332731,
+            0.9983486763221576,
+            0.9975547510555541
+          ],
+          "mean": 0.996936236901674,
+          "descriptive_95": [
+            0.9924570957447117,
+            1.0014153780586363
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.004784607341492212,
+            0.0015706888083034365,
+            0.0023170303574470176
+          ],
+          "mean": 0.0028907755024142217,
+          "descriptive_95": [
+            -0.0012876044617156153,
+            0.007069155466544059
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.001308353823795513,
+            -0.00040950395886086893,
+            -0.000618867727798249
+          ],
+          "mean": -0.0007789085034848771,
+          "descriptive_95": [
+            -0.0019472261133717543,
+            0.0003894091064020001
+          ]
+        }
+      },
+      "bias_mean": 8.53253680665079e-05,
+      "rmse": 8.878180895690274e-05,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "single_roll",
+      "scale_arcsec": 1.22,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.990932076102512,
+            0.9950362028174797,
+            0.9852111681381728
+          ],
+          "mean": 0.9903931490193881,
+          "descriptive_95": [
+            0.9781348271036374,
+            1.0026514709351388
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.00914070740329169,
+            0.005005931007833913,
+            0.014852247656920385
+          ],
+          "mean": 0.009666295356015328,
+          "descriptive_95": [
+            -0.002615666845376577,
+            0.021948257557407234
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.0013414058244286496,
+            -0.0007020888722600471,
+            -0.0019574678975788616
+          ],
+          "mean": -0.001333654198089186,
+          "descriptive_95": [
+            -0.0028930105611521947,
+            0.00022570216497382273
+          ]
+        }
+      },
+      "bias_mean": 0.00013530215144994307,
+      "rmse": 0.00014714935567528502,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    },
+    {
+      "scenario": "single_roll",
+      "scale_arcsec": 4.88,
+      "trials": 12,
+      "slopes": {
+        "recovered": {
+          "per_seed": [
+            0.9967364236757073,
+            0.9969427363900137,
+            0.9965526700890658
+          ],
+          "mean": 0.9967439433849289,
+          "descriptive_95": [
+            0.9962591841709542,
+            0.9972287025989036
+          ]
+        },
+        "host_projection": {
+          "per_seed": [
+            0.003078604740910524,
+            0.0028597142752818825,
+            0.00323290977786387
+          ],
+          "mean": 0.003057076264685425,
+          "descriptive_95": [
+            0.0025912336930888247,
+            0.0035229188362820257
+          ]
+        },
+        "nucleus": {
+          "per_seed": [
+            -0.0009195616067717711,
+            -0.000791285614130712,
+            -0.0009332602275837241
+          ],
+          "mean": -0.0008813691494954024,
+          "descriptive_95": [
+            -0.001075913701881016,
+            -0.000686824597109789
+          ]
+        }
+      },
+      "bias_mean": 7.795183341508979e-05,
+      "rmse": 7.849245966230505e-05,
+      "positive_coverage_count": 9,
+      "positive_trials": 9,
+      "zero_equal_tail_coverage_count": 0,
+      "zero_trials": 3
+    }
+  ],
+  "science_promotion_approved": false,
+  "failures": [],
+  "mismatch_count": 216,
+  "completed_fits": 264,
+  "source_hashes": {
+    "src/gp_identifiability.py": "8e7e4a57ea3e2194d7ebac01163245e7a3df30600bf19ee9340a1651b0da0f74",
+    "src/stage4_validation.py": "b83de06ad3a568a5087ac5d60e1f36678a4adc223cb417d099dda2f682baf554",
+    "scripts/validate_stage4.py": "a1bcc465a3fda6265011bbf58799b22569fa35e9f21dd36374c3cd4a1ec687e3"
+  },
+  "injections": [
+    {
+      "key": "injection_separated_1729_0.0_1.22",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00012999156184855527,
+      "nucleus": 0.003948755646064789,
+      "host_projection": 0.0011564064156943054,
+      "interval": [
+        5.206182964733852e-06,
+        0.00035846977314559316
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00031284478819503577,
+      "bias": 0.00012999156184855527,
+      "input_sha256": "16a6595306fb92b435d7f4871c6a4dbf05275425fa7ec0e78f5ee60bb01d01f3"
+    },
+    {
+      "key": "injection_separated_1729_0.0_4.88",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 6.989193883794513e-05,
+      "nucleus": 0.003948681282515899,
+      "host_projection": 0.0012184974144575918,
+      "interval": [
+        3.0055141305767346e-06,
+        0.00018220798646198907
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00016104107802602954,
+      "bias": 6.989193883794513e-05,
+      "input_sha256": "16a6595306fb92b435d7f4871c6a4dbf05275425fa7ec0e78f5ee60bb01d01f3"
+    },
+    {
+      "key": "injection_separated_1729_0.0005_1.22",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005175555221966175,
+      "nucleus": 0.0039401915210315235,
+      "host_projection": 0.0012677227226815622,
+      "interval": [
+        0.00021335567339702714,
+        0.0008199780427461306
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007716570418856803,
+      "bias": 1.755552219661748e-05,
+      "input_sha256": "30e071ea5be68ea8e00e8359bbe6763968e68f28aeab397ea11139ea11ed0563"
+    },
+    {
+      "key": "injection_separated_1729_0.0005_4.88",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005306186252805407,
+      "nucleus": 0.003938989584996034,
+      "host_projection": 0.0012549386121291383,
+      "interval": [
+        0.00038936340412390463,
+        0.0006698006077648774
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006487638769258775,
+      "bias": 3.061862528054072e-05,
+      "input_sha256": "30e071ea5be68ea8e00e8359bbe6763968e68f28aeab397ea11139ea11ed0563"
+    },
+    {
+      "key": "injection_separated_1729_0.002_1.22",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0020171725609133373,
+      "nucleus": 0.003940181446313228,
+      "host_projection": 0.0012681689584597077,
+      "interval": [
+        0.0017119905907267312,
+        0.00231978418556763
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022715427541009146,
+      "bias": 1.717256091333724e-05,
+      "input_sha256": "40d7d1f31437167eb6b6bb78d483c579f19c354eef05ca9e5f8c814b9751bb85"
+    },
+    {
+      "key": "injection_separated_1729_0.002_4.88",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020307373913567525,
+      "nucleus": 0.003938968325971113,
+      "host_projection": 0.0012548912553912344,
+      "interval": [
+        0.0018894821702001156,
+        0.0021699193738410885
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002148882643002088,
+      "bias": 3.0737391356752426e-05,
+      "input_sha256": "40d7d1f31437167eb6b6bb78d483c579f19c354eef05ca9e5f8c814b9751bb85"
+    },
+    {
+      "key": "injection_separated_1729_0.004_1.22",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004017022019303153,
+      "nucleus": 0.003940155288266286,
+      "host_projection": 0.0012684142056325195,
+      "interval": [
+        0.0037118400491165304,
+        0.004319633643957429
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004271392212490713,
+      "bias": 1.7022019303153044e-05,
+      "input_sha256": "57752258730367e39e752bb53610b3728d3049a76462bc1bfb0d687ca3e1893f"
+    },
+    {
+      "key": "injection_separated_1729_0.004_4.88",
+      "scenario": "separated",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004030895746125031,
+      "nucleus": 0.0039389399806045045,
+      "host_projection": 0.0012548281130740331,
+      "interval": [
+        0.0038896405249683966,
+        0.004170077728609369
+      ],
+      "covers": true,
+      "posterior_upper95": 0.00414904099777037,
+      "bias": 3.0895746125031084e-05,
+      "input_sha256": "57752258730367e39e752bb53610b3728d3049a76462bc1bfb0d687ca3e1893f"
+    },
+    {
+      "key": "injection_separated_2718_0.0_1.22",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00018654028401428544,
+      "nucleus": 0.004040776008220511,
+      "host_projection": 0.0010829645495536607,
+      "interval": [
+        1.1302388577702588e-05,
+        0.00044354209926310886
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0004000358514373449,
+      "bias": 0.00018654028401428544,
+      "input_sha256": "101d975ae70f26466d2df34666e906054485f489bd0bc66af645c69cd7fcf15b"
+    },
+    {
+      "key": "injection_separated_2718_0.0_4.88",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00010546000492113247,
+      "nucleus": 0.003983516941730014,
+      "host_projection": 0.0011777615932870604,
+      "interval": [
+        7.757714943410345e-06,
+        0.0002349291535052586
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00021239081691316428,
+      "bias": 0.00010546000492113247,
+      "input_sha256": "101d975ae70f26466d2df34666e906054485f489bd0bc66af645c69cd7fcf15b"
+    },
+    {
+      "key": "injection_separated_2718_0.0005_1.22",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0006340723808438705,
+      "nucleus": 0.004036602538864242,
+      "host_projection": 0.001134942629153044,
+      "interval": [
+        0.00033331786935896694,
+        0.0009315373725947747
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008857653746119985,
+      "bias": 0.0001340723808438705,
+      "input_sha256": "514d2f4a52af9ca46d8ffa51835f91c36f8941d20c98885a936a21f6e56cbc9c"
+    },
+    {
+      "key": "injection_separated_2718_0.0005_4.88",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005907582799519692,
+      "nucleus": 0.003980138676980021,
+      "host_projection": 0.0011913917430322616,
+      "interval": [
+        0.0004493720726150343,
+        0.0007320883783315956
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000708347643242898,
+      "bias": 9.075827995196919e-05,
+      "input_sha256": "514d2f4a52af9ca46d8ffa51835f91c36f8941d20c98885a936a21f6e56cbc9c"
+    },
+    {
+      "key": "injection_separated_2718_0.002_1.22",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002133919564355521,
+      "nucleus": 0.004036576220424457,
+      "host_projection": 0.0011351660327400053,
+      "interval": [
+        0.0018331681844039193,
+        0.002431423195291638
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0023856489576922868,
+      "bias": 0.0001339195643555208,
+      "input_sha256": "839d2523065df87a08f24c5e40a90b1dcb7d8de3392d3069bb60e0a1bb7f0edb"
+    },
+    {
+      "key": "injection_separated_2718_0.002_4.88",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002090877046028172,
+      "nucleus": 0.003980117417955031,
+      "host_projection": 0.001191344386294368,
+      "interval": [
+        0.0019494908386912435,
+        0.0022322071444078047
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022084664093191073,
+      "bias": 9.087704602817178e-05,
+      "input_sha256": "839d2523065df87a08f24c5e40a90b1dcb7d8de3392d3069bb60e0a1bb7f0edb"
+    },
+    {
+      "key": "injection_separated_2718_0.004_1.22",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0041337690227452924,
+      "nucleus": 0.004036550062377394,
+      "host_projection": 0.001135411279912863,
+      "interval": [
+        0.0038330176427936917,
+        0.00443127265368141
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004385498416082059,
+      "bias": 0.00013376902274529236,
+      "input_sha256": "6e49242bb87e79a6e1a247143c9b39293a6661ba48546b141c10d8c9084a3cfb"
+    },
+    {
+      "key": "injection_separated_2718_0.004_4.88",
+      "scenario": "separated",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0040910354007964635,
+      "nucleus": 0.003980089072588434,
+      "host_projection": 0.0011912812439771826,
+      "interval": [
+        0.003949649193459508,
+        0.0042323654991760695
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004208624764087373,
+      "bias": 9.103540079646345e-05,
+      "input_sha256": "6e49242bb87e79a6e1a247143c9b39293a6661ba48546b141c10d8c9084a3cfb"
+    },
+    {
+      "key": "injection_separated_31415_0.0_1.22",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00023963421532763226,
+      "nucleus": 0.004045776859866559,
+      "host_projection": 0.0010573222432144376,
+      "interval": [
+        2.2232367521239502e-05,
+        0.0005067071465986036
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00046624619930525765,
+      "bias": 0.00023963421532763226,
+      "input_sha256": "25a5bfc9bb6804bc7f6ca382685b2c6d21dbdfb0ae1ba5973d9f29cebf3bc867"
+    },
+    {
+      "key": "injection_separated_31415_0.0_4.88",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 9.146414750227174e-05,
+      "nucleus": 0.003991786164768336,
+      "host_projection": 0.0012200500049673322,
+      "interval": [
+        6.508260574096627e-06,
+        0.00021735440464883284
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00019498939600292293,
+      "bias": 9.146414750227174e-05,
+      "input_sha256": "25a5bfc9bb6804bc7f6ca382685b2c6d21dbdfb0ae1ba5973d9f29cebf3bc867"
+    },
+    {
+      "key": "injection_separated_31415_0.0005_1.22",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0007168975731275056,
+      "nucleus": 0.004044060902750958,
+      "host_projection": 0.001079865730600807,
+      "interval": [
+        0.0004236368386597518,
+        0.0010029134802518964
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009613171975837785,
+      "bias": 0.0002168975731275056,
+      "input_sha256": "56eb3bae020201adea7a1770fb389beba6e9fa85afb2ce2c09222bc3d70b1ccc"
+    },
+    {
+      "key": "injection_separated_31415_0.0005_4.88",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005711720754869636,
+      "nucleus": 0.003987009780393422,
+      "host_projection": 0.0012388502994734112,
+      "interval": [
+        0.00043351686097956895,
+        0.0007122036772673891
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000688681270285799,
+      "bias": 7.117207548696357e-05,
+      "input_sha256": "56eb3bae020201adea7a1770fb389beba6e9fa85afb2ce2c09222bc3d70b1ccc"
+    },
+    {
+      "key": "injection_separated_31415_0.002_1.22",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002216784666919824,
+      "nucleus": 0.004044041284215721,
+      "host_projection": 0.0010800496659804418,
+      "interval": [
+        0.0019235239324520805,
+        0.0025028005740442253
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002461204291376107,
+      "bias": 0.00021678466691982387,
+      "input_sha256": "c08177c387dcf6ca67707356ddca779217f5cd01f63b620363b82180351e9c06"
+    },
+    {
+      "key": "injection_separated_31415_0.002_4.88",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020712908415631594,
+      "nucleus": 0.003986988521368477,
+      "host_projection": 0.0012388029427355233,
+      "interval": [
+        0.0019336356270557701,
+        0.00221232244334359
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002188800036362,
+      "bias": 7.129084156315933e-05,
+      "input_sha256": "c08177c387dcf6ca67707356ddca779217f5cd01f63b620363b82180351e9c06"
+    },
+    {
+      "key": "injection_separated_31415_0.004_1.22",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004216672461955458,
+      "nucleus": 0.004043997826397365,
+      "host_projection": 0.0010802580012287566,
+      "interval": [
+        0.003923381875992646,
+        0.004502705618546885
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004461374383975092,
+      "bias": 0.0002166724619554576,
+      "input_sha256": "25ab3ab3c9a29c0445f860da11520e9e6f04d4a5f53505f81a04110027491edb"
+    },
+    {
+      "key": "injection_separated_31415_0.004_4.88",
+      "scenario": "separated",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004071449196331417,
+      "nucleus": 0.0039869601760018645,
+      "host_projection": 0.0012387398004183527,
+      "interval": [
+        0.0039337939818240245,
+        0.004212480798111845
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004188958391130255,
+      "bias": 7.144919633141674e-05,
+      "input_sha256": "25ab3ab3c9a29c0445f860da11520e9e6f04d4a5f53505f81a04110027491edb"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.0_1.22",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0002792857335723148,
+      "nucleus": 0.003677249314597007,
+      "host_projection": 0.0014024365831493205,
+      "interval": [
+        1.0482524282297654e-05,
+        0.0007847809986333294
+      ],
+      "covers": false,
+      "posterior_upper95": 0.000698339765508829,
+      "bias": 0.0002792857335723148,
+      "input_sha256": "add9c81f07a79c42e9c66df3ab2579e63f181df2f33bfcf183893b907a1a1007"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.0_4.88",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00015437286485142797,
+      "nucleus": 0.003788882941036649,
+      "host_projection": 0.0014199942287756256,
+      "interval": [
+        6.816511237384251e-06,
+        0.00041837077356398527
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0003691144954174796,
+      "bias": 0.00015437286485142797,
+      "input_sha256": "add9c81f07a79c42e9c66df3ab2579e63f181df2f33bfcf183893b907a1a1007"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.0005_1.22",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005457728333032272,
+      "nucleus": 0.0038964272906655585,
+      "host_projection": 0.0014216273123619774,
+      "interval": [
+        4.7982090084919005e-05,
+        0.0012076501126966168
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0010882131950016778,
+      "bias": 4.5772833303227224e-05,
+      "input_sha256": "61ecca739e82d1b0b56cbd2fb171f32b109dde7cf40aa6afe0bd6c3391ed9a95"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.0005_4.88",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005244420612236646,
+      "nucleus": 0.00390926544420306,
+      "host_projection": 0.0014302204125357832,
+      "interval": [
+        0.00018091410905289726,
+        0.0008750101365789858
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008205049742604382,
+      "bias": 2.4442061223664546e-05,
+      "input_sha256": "61ecca739e82d1b0b56cbd2fb171f32b109dde7cf40aa6afe0bd6c3391ed9a95"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.002_1.22",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.001986495669195592,
+      "nucleus": 0.003951975847649897,
+      "host_projection": 0.0014266682324351526,
+      "interval": [
+        0.0013001657178531092,
+        0.0026922866953617303
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0025727101477588396,
+      "bias": -1.3504330804407858e-05,
+      "input_sha256": "0700797e8a9b94814bf961646b145d7fdc88f3882b55fb60ddd00a8972d676df"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.002_4.88",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020230261963155023,
+      "nucleus": 0.003910698838973914,
+      "host_projection": 0.0014302746340271212,
+      "interval": [
+        0.0016744603563080627,
+        0.002374599818841534
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0023200023972592978,
+      "bias": 2.302619631550226e-05,
+      "input_sha256": "0700797e8a9b94814bf961646b145d7fdc88f3882b55fb60ddd00a8972d676df"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.004_1.22",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.003984271157237256,
+      "nucleus": 0.003954267475789532,
+      "host_projection": 0.0014267251918438442,
+      "interval": [
+        0.003297941205894779,
+        0.0046900621834034
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0045704856358005095,
+      "bias": -1.5728842762743715e-05,
+      "input_sha256": "01d0dadedfb4b0b227e50bca87b9720f4bd7741f0eafc3a2fc66d549510029e7"
+    },
+    {
+      "key": "injection_near_nucleus_1729_0.004_4.88",
+      "scenario": "near_nucleus",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00402258555125953,
+      "nucleus": 0.003911272912357351,
+      "host_projection": 0.0014302176911606753,
+      "interval": [
+        0.003674019711252103,
+        0.0043741591737855735
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004319561752203337,
+      "bias": 2.2585551259529657e-05,
+      "input_sha256": "01d0dadedfb4b0b227e50bca87b9720f4bd7741f0eafc3a2fc66d549510029e7"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.0_1.22",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00024031166194747757,
+      "nucleus": 0.0038011325200175846,
+      "host_projection": 0.0013252117882837774,
+      "interval": [
+        8.937308496898001e-06,
+        0.000726731694705323
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0006136506636729282,
+      "bias": 0.00024031166194747757,
+      "input_sha256": "a187f6916f435c8a5518af85ab38065feaf9f1d85589e69926b7ed0c31d2e9c5"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.0_4.88",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00010664878504691184,
+      "nucleus": 0.0038611545303992973,
+      "host_projection": 0.001402978700624892,
+      "interval": [
+        3.5036444230330695e-06,
+        0.00032999078101673507
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0002797616428299513,
+      "bias": 0.00010664878504691184,
+      "input_sha256": "a187f6916f435c8a5518af85ab38065feaf9f1d85589e69926b7ed0c31d2e9c5"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.0005_1.22",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0004720503046047157,
+      "nucleus": 0.004053170533637727,
+      "host_projection": 0.0013472134833085777,
+      "interval": [
+        3.316838686742304e-05,
+        0.0010938529324375544
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009862563013269881,
+      "bias": -2.794969539528431e-05,
+      "input_sha256": "763331ed3327aa766bc8a5d51ae2107372244d8b0a3bfe4f6ab1f706b3ae7a66"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.0005_4.88",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00037987256251524306,
+      "nucleus": 0.004070812805051239,
+      "host_projection": 0.0014218453034570526,
+      "interval": [
+        6.376858943850285e-05,
+        0.0007287923419517723
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006701053605859795,
+      "bias": -0.00012012743748475695,
+      "input_sha256": "763331ed3327aa766bc8a5d51ae2107372244d8b0a3bfe4f6ab1f706b3ae7a66"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.002_1.22",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0018783510769103042,
+      "nucleus": 0.004141150773742054,
+      "host_projection": 0.0013548297537316443,
+      "interval": [
+        0.0011899267842820035,
+        0.002567791828352367
+      ],
+      "covers": true,
+      "posterior_upper95": 0.00245755320316087,
+      "bias": -0.00012164892308969585,
+      "input_sha256": "3c018975f94c073768e574518c7c5d9345e93f6325069ca42a4ba057bcdc5481"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.002_4.88",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0018704188491731135,
+      "nucleus": 0.004079651421055225,
+      "host_projection": 0.0014225546773022214,
+      "interval": [
+        0.0015155787133426177,
+        0.002226679568440389
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002167501822936972,
+      "bias": -0.0001295811508268865,
+      "input_sha256": "3c018975f94c073768e574518c7c5d9345e93f6325069ca42a4ba057bcdc5481"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.004_1.22",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.003876126564952311,
+      "nucleus": 0.004143442401881333,
+      "host_projection": 0.0013548867131403363,
+      "interval": [
+        0.0031877022723240107,
+        0.004565567316394374
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004455328691202877,
+      "bias": -0.00012387343504768888,
+      "input_sha256": "63c7590058b7da18cfd8c4afd2c55a00b47d6c10363ee7647f85d7ffcc85c36a"
+    },
+    {
+      "key": "injection_near_nucleus_2718_0.004_4.88",
+      "scenario": "near_nucleus",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.003869978204117318,
+      "nucleus": 0.004080225494438498,
+      "host_projection": 0.0014224977344357702,
+      "interval": [
+        0.0035151380682868273,
+        0.004226238923384599
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004167061177881181,
+      "bias": -0.00013002179588268194,
+      "input_sha256": "63c7590058b7da18cfd8c4afd2c55a00b47d6c10363ee7647f85d7ffcc85c36a"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.0_1.22",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005129698794356594,
+      "nucleus": 0.0035435861623005637,
+      "host_projection": 0.0013364915928846925,
+      "interval": [
+        4.5434441462289046e-05,
+        0.0011559602908428456
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0010427956281078886,
+      "bias": 0.0005129698794356594,
+      "input_sha256": "43f7cbe1a37cc42fae581c7989e4a15922b2c0d369f818864b6a407882002b92"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.0_4.88",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00028427337797503477,
+      "nucleus": 0.0037066172448829877,
+      "host_projection": 0.0014068118756169748,
+      "interval": [
+        2.5517535033031456e-05,
+        0.0006180976114337184
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0005621965289726094,
+      "bias": 0.00028427337797503477,
+      "input_sha256": "43f7cbe1a37cc42fae581c7989e4a15922b2c0d369f818864b6a407882002b92"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.0005_1.22",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0009434237423554213,
+      "nucleus": 0.003608616452594994,
+      "host_projection": 0.0013424032659430647,
+      "interval": [
+        0.0002603707381828208,
+        0.001635557414939181
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0015237464827591563,
+      "bias": 0.00044342374235542125,
+      "input_sha256": "ac74b3e4c5e800a0d07aef4666436295aad6984d56d6ce5c88a724fc7dbe3546"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.0005_4.88",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.000755833182643951,
+      "nucleus": 0.003733052466903357,
+      "host_projection": 0.0014089622219285239,
+      "interval": [
+        0.00039971701459549924,
+        0.0011107032763144431
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0010535603115453655,
+      "bias": 0.000255833182643951,
+      "input_sha256": "ac74b3e4c5e800a0d07aef4666436295aad6984d56d6ce5c88a724fc7dbe3546"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.002_1.22",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00243720163260915,
+      "nucleus": 0.003614710622859852,
+      "host_projection": 0.001342702419065438,
+      "interval": [
+        0.0017360506140214724,
+        0.0031322486650215966
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0030206343784173017,
+      "bias": 0.00043720163260914987,
+      "input_sha256": "36856e0b785f506fece0097084a0ba643708eeb58d1bd3f05afdd5e69c39e1a4"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.002_4.88",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0022555026988522182,
+      "nucleus": 0.0037334830219406855,
+      "host_projection": 0.0014089195147786954,
+      "interval": [
+        0.001899386530803769,
+        0.002610372792522713
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0025532298277536353,
+      "bias": 0.0002555026988522182,
+      "input_sha256": "36856e0b785f506fece0097084a0ba643708eeb58d1bd3f05afdd5e69c39e1a4"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.004_1.22",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00443497712065083,
+      "nucleus": 0.0036170022509994532,
+      "host_projection": 0.0013427593784741314,
+      "interval": [
+        0.003733826102063142,
+        0.0051300241530632664
+      ],
+      "covers": true,
+      "posterior_upper95": 0.005018409866458971,
+      "bias": 0.00043497712065083006,
+      "input_sha256": "196c7ac11cd1a25213dfffb94f6d25b9982942af5b61f66a36dcd267a6292ee8"
+    },
+    {
+      "key": "injection_near_nucleus_31415_0.004_4.88",
+      "scenario": "near_nucleus",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004255062053796306,
+      "nucleus": 0.003734057095324064,
+      "host_projection": 0.0014088625719122325,
+      "interval": [
+        0.0038989458857478627,
+        0.004609932147466806
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004552789182697728,
+      "bias": 0.0002550620537963063,
+      "input_sha256": "196c7ac11cd1a25213dfffb94f6d25b9982942af5b61f66a36dcd267a6292ee8"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.0_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00015521280621640416,
+      "nucleus": 0.004080524161282672,
+      "host_projection": 0.001051956763100876,
+      "interval": [
+        6.660307783112509e-06,
+        0.0004115383852622278
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0003629398290294742,
+      "bias": 0.00015521280621640416,
+      "input_sha256": "8053551e2893a14c1b8f1a09f083ca7d89986e055ad5a39b743f58de0505924b"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.0_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 7.474093814766234e-05,
+      "nucleus": 0.004067245691878985,
+      "host_projection": 0.0011455482333114218,
+      "interval": [
+        2.6988174811426006e-06,
+        0.0002117047735460798
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0001834699341406202,
+      "bias": 7.474093814766234e-05,
+      "input_sha256": "8053551e2893a14c1b8f1a09f083ca7d89986e055ad5a39b743f58de0505924b"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.0005_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005397687200768938,
+      "nucleus": 0.004059674896543527,
+      "host_projection": 0.0011644169685083275,
+      "interval": [
+        0.00020035691908055253,
+        0.0008733139049209145
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008247095867445699,
+      "bias": 3.976872007689376e-05,
+      "input_sha256": "185e584796a2a29dc575536b9ec212604efd60d9906283ea4b22b4d0e94aa4d9"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.0005_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0004914346054286422,
+      "nucleus": 0.0040453612763318774,
+      "host_projection": 0.0012158396529348098,
+      "interval": [
+        0.00030254646960405323,
+        0.0006800929655093783
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000650282818016306,
+      "bias": -8.565394571357775e-06,
+      "input_sha256": "185e584796a2a29dc575536b9ec212604efd60d9906283ea4b22b4d0e94aa4d9"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.002_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0020386496057499927,
+      "nucleus": 0.0040594359450700345,
+      "host_projection": 0.0011655660546844786,
+      "interval": [
+        0.0016948102744446302,
+        0.002372814225297923
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002324317133636683,
+      "bias": 3.8649605749992676e-05,
+      "input_sha256": "323d7fbd1dcf1fb396b523426eaebc092116db451c958d469edf1265c41344c6"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.002_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0019913985157011932,
+      "nucleus": 0.004045282191623965,
+      "host_projection": 0.001215917108275303,
+      "interval": [
+        0.001802510379876615,
+        0.00218005687578194
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0021502467282888678,
+      "bias": -8.601484298806795e-06,
+      "input_sha256": "323d7fbd1dcf1fb396b523426eaebc092116db451c958d469edf1265c41344c6"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.004_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004038200269436843,
+      "nucleus": 0.004059268392813837,
+      "host_projection": 0.0011660841810958598,
+      "interval": [
+        0.0036943609381314803,
+        0.004372364888984774
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004323867797323533,
+      "bias": 3.8200269436843015e-05,
+      "input_sha256": "c1eda889a7c38c35de34011d6ec46932035b36cb73b19b93ab9353ca752a1642"
+    },
+    {
+      "key": "injection_masked_few_templates_1729_0.004_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.003991350396064594,
+      "nucleus": 0.004045176745346807,
+      "host_projection": 0.0012160203820626428,
+      "interval": [
+        0.003802462260240023,
+        0.004180008756145348
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004150198608652276,
+      "bias": -8.649603935406355e-06,
+      "input_sha256": "c1eda889a7c38c35de34011d6ec46932035b36cb73b19b93ab9353ca752a1642"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.0_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00014800404090944743,
+      "nucleus": 0.004112134778292818,
+      "host_projection": 0.0010772828001118528,
+      "interval": [
+        6.5167979072186854e-06,
+        0.00040352976080524277
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00035163767210066307,
+      "bias": 0.00014800404090944743,
+      "input_sha256": "626e217bb3e15d04824edbf76aafe19d8c0a3be55005fc2eeadac6ebf34ae7b3"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.0_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 7.123186060406078e-05,
+      "nucleus": 0.0040494496803959515,
+      "host_projection": 0.0011778941428704493,
+      "interval": [
+        2.4610325979582833e-06,
+        0.0002040814659872961
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00017855015420412576,
+      "bias": 7.123186060406078e-05,
+      "input_sha256": "626e217bb3e15d04824edbf76aafe19d8c0a3be55005fc2eeadac6ebf34ae7b3"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.0005_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005204711155380187,
+      "nucleus": 0.004087171296183359,
+      "host_projection": 0.001201866222490081,
+      "interval": [
+        0.00018118431459175096,
+        0.0008586543196036413
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008055066433461078,
+      "bias": 2.04711155380187e-05,
+      "input_sha256": "618273b2858356df5e370d8e66fd2168a51a35c201d44c72a9e5382c23bb56af"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.0005_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0004823947780601356,
+      "nucleus": 0.0040266576605872476,
+      "host_projection": 0.0012531668360323414,
+      "interval": [
+        0.00029158514230826513,
+        0.000673082944170163
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000642057535247055,
+      "bias": -1.76052219398644e-05,
+      "input_sha256": "618273b2858356df5e370d8e66fd2168a51a35c201d44c72a9e5382c23bb56af"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.002_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002019538666422251,
+      "nucleus": 0.004086944522865147,
+      "host_projection": 0.0012028090174087773,
+      "interval": [
+        0.0016780836038467735,
+        0.0023584740308044082
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0023051794638048735,
+      "bias": 1.9538666422251084e-05,
+      "input_sha256": "f3f7767325d03e50b35ff08076780f12f55a8a7a45268281b9e3195880c5f6b2"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.002_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0019823586883326834,
+      "nucleus": 0.004026578575879336,
+      "host_projection": 0.0012532442913728511,
+      "interval": [
+        0.0017915490525808172,
+        0.0021730468544427155
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0021420214455196073,
+      "bias": -1.764131166731662e-05,
+      "input_sha256": "f3f7767325d03e50b35ff08076780f12f55a8a7a45268281b9e3195880c5f6b2"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.004_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0040190893301091084,
+      "nucleus": 0.004086776970608956,
+      "host_projection": 0.0012033271438201655,
+      "interval": [
+        0.0036776342675336163,
+        0.004358024694491251
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0043047301274917165,
+      "bias": 1.9089330109108363e-05,
+      "input_sha256": "98a8c93d2b790ed89502cd66ddfe6ad21a124ed67051f1b5ebf829b6543e6afb"
+    },
+    {
+      "key": "injection_masked_few_templates_2718_0.004_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.003982310568696106,
+      "nucleus": 0.004026473129602136,
+      "host_projection": 0.0012533475651601846,
+      "interval": [
+        0.0037915009329442294,
+        0.004172998734806127
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0041419733258830195,
+      "bias": -1.768943130389406e-05,
+      "input_sha256": "98a8c93d2b790ed89502cd66ddfe6ad21a124ed67051f1b5ebf829b6543e6afb"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.0_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00019388359974931537,
+      "nucleus": 0.00402767767329474,
+      "host_projection": 0.0011210917950747875,
+      "interval": [
+        1.0091555848912241e-05,
+        0.0004821621633409197
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0004333336025706545,
+      "bias": 0.00019388359974931537,
+      "input_sha256": "b5820805ddfd0a8a064154358ad32812d7014e7df80e228f661b4095e60046ea"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.0_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00012210534107641197,
+      "nucleus": 0.003968020718194709,
+      "host_projection": 0.001207435595292744,
+      "interval": [
+        7.600962547153669e-06,
+        0.00029068859973655436
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00025960320914774715,
+      "bias": 0.00012210534107641197,
+      "input_sha256": "b5820805ddfd0a8a064154358ad32812d7014e7df80e228f661b4095e60046ea"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.0005_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0006230371335534389,
+      "nucleus": 0.004015218750872915,
+      "host_projection": 0.0011901315510246375,
+      "interval": [
+        0.0002847292318684,
+        0.0009624733901181766
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009087537801986133,
+      "bias": 0.00012303713355343892,
+      "input_sha256": "c4a1edd3242791ff29c0420626919450eeb977f648b5028f7fac11e0016eb309"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.0005_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.000593681922693249,
+      "nucleus": 0.00396091663706381,
+      "host_projection": 0.0012313737226004782,
+      "interval": [
+        0.00040578217527627183,
+        0.0007829643776812283
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007514250639420315,
+      "bias": 9.368192269324904e-05,
+      "input_sha256": "c4a1edd3242791ff29c0420626919450eeb977f648b5028f7fac11e0016eb309"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.002_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002122578175351375,
+      "nucleus": 0.004015120791375336,
+      "host_projection": 0.0011906203389650857,
+      "interval": [
+        0.0017841986326594414,
+        0.002462129475712707
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0024084143488980235,
+      "bias": 0.00012257817535137484,
+      "input_sha256": "d5840648db9dfaa49afcff204e7d45dd67c7b7f59bd916ed1730776bb67cec11"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.002_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020936458329658026,
+      "nucleus": 0.00396083755235591,
+      "host_projection": 0.001231451177940981,
+      "interval": [
+        0.0019057460855488274,
+        0.002282928287953784
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002251388974214587,
+      "bias": 9.364583296580251e-05,
+      "input_sha256": "d5840648db9dfaa49afcff204e7d45dd67c7b7f59bd916ed1730776bb67cec11"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.004_1.22",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004122157811607974,
+      "nucleus": 0.004014962156381141,
+      "host_projection": 0.0011911061233707586,
+      "interval": [
+        0.0037837495580762865,
+        0.004461802989819168
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0044080311716121826,
+      "bias": 0.00012215781160797388,
+      "input_sha256": "05eb2393bfb4b62409cd2240001e417c475f2869c3fec0f31bc7cbb9902af163"
+    },
+    {
+      "key": "injection_masked_few_templates_31415_0.004_4.88",
+      "scenario": "masked_few_templates",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004093597713329227,
+      "nucleus": 0.003960732106078708,
+      "host_projection": 0.0012315544517283107,
+      "interval": [
+        0.0039056979659122444,
+        0.004282880168317201
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004251340854578004,
+      "bias": 9.359771332922723e-05,
+      "input_sha256": "05eb2393bfb4b62409cd2240001e417c475f2869c3fec0f31bc7cbb9902af163"
+    },
+    {
+      "key": "injection_steep_host_1729_0.0_1.22",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0003019129822530551,
+      "nucleus": 0.004090781124500277,
+      "host_projection": 0.0019933416614611845,
+      "interval": [
+        4.45511193089333e-05,
+        0.0005964690023276884
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0005472572646525974,
+      "bias": 0.0003019129822530551,
+      "input_sha256": "a6ce78e504002857b9f48e9d6385f4c75ca71354623e7a57e62ded2f91a57420"
+    },
+    {
+      "key": "injection_steep_host_1729_0.0_4.88",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00011448919177871716,
+      "nucleus": 0.003951449363013475,
+      "host_projection": 0.002214271241657439,
+      "interval": [
+        1.069616073021945e-05,
+        0.00024489284565589186
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00022436233740007024,
+      "bias": 0.00011448919177871716,
+      "input_sha256": "a6ce78e504002857b9f48e9d6385f4c75ca71354623e7a57e62ded2f91a57420"
+    },
+    {
+      "key": "injection_steep_host_1729_0.0005_1.22",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0007909238909117016,
+      "nucleus": 0.004089805804065412,
+      "host_projection": 0.0020043463458779137,
+      "interval": [
+        0.00048571948233439347,
+        0.0010937916052726718
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0010452663547310167,
+      "bias": 0.0002909238909117016,
+      "input_sha256": "a271079f772dbf9bf7b4a46972b282dc1b28102f805b5d41287c440e303371e6"
+    },
+    {
+      "key": "injection_steep_host_1729_0.0005_4.88",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0006039624555269324,
+      "nucleus": 0.003948662794444833,
+      "host_projection": 0.002224147350777958,
+      "interval": [
+        0.0004627072343702941,
+        0.0007431444380112668
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000722107707172267,
+      "bias": 0.00010396245552693234,
+      "input_sha256": "a271079f772dbf9bf7b4a46972b282dc1b28102f805b5d41287c440e303371e6"
+    },
+    {
+      "key": "injection_steep_host_1729_0.002_1.22",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0022908109847040703,
+      "nucleus": 0.004089786185530192,
+      "host_projection": 0.002004530281257517,
+      "interval": [
+        0.001985606576126756,
+        0.0025936786990650345
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002545153448523379,
+      "bias": 0.0002908109847040703,
+      "input_sha256": "1ef41fcbebda552a69376cf2db9549459bdaa0707a0598f86ff5cf9e70ff2a86"
+    },
+    {
+      "key": "injection_steep_host_1729_0.002_4.88",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0021040812216031246,
+      "nucleus": 0.003948641535419834,
+      "host_projection": 0.002224099994040075,
+      "interval": [
+        0.0019628260004464918,
+        0.002243263204087465
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022222264732484646,
+      "bias": 0.00010408122160312453,
+      "input_sha256": "1ef41fcbebda552a69376cf2db9549459bdaa0707a0598f86ff5cf9e70ff2a86"
+    },
+    {
+      "key": "injection_steep_host_1729_0.004_1.22",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004290660443093819,
+      "nucleus": 0.004089760027483199,
+      "host_projection": 0.0020047755284303775,
+      "interval": [
+        0.003985456034516516,
+        0.0045935281574547935
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004545002906913139,
+      "bias": 0.0002906604430938193,
+      "input_sha256": "55b66eb5f2c4db3a4f352560d6b4afaab31dd20d3947a128202d3279c28648ca"
+    },
+    {
+      "key": "injection_steep_host_1729_0.004_4.88",
+      "scenario": "steep_host",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004104239576371378,
+      "nucleus": 0.0039486131900532745,
+      "host_projection": 0.0022240368517228936,
+      "interval": [
+        0.003962984355214754,
+        0.004243421558855725
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004222384828016726,
+      "bias": 0.0001042395763713776,
+      "input_sha256": "55b66eb5f2c4db3a4f352560d6b4afaab31dd20d3947a128202d3279c28648ca"
+    },
+    {
+      "key": "injection_steep_host_2718_0.0_1.22",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0004099252812729615,
+      "nucleus": 0.004186495870575601,
+      "host_projection": 0.0018690452077649803,
+      "interval": [
+        0.00011806321150283324,
+        0.0007075527222843885
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0006603900619773296,
+      "bias": 0.0004099252812729615,
+      "input_sha256": "cd409cbb1f2032055a7b45506ac43b7938f2ab2029c5971e5cb300cbfde263a0"
+    },
+    {
+      "key": "injection_steep_host_2718_0.0_4.88",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0001660394343585554,
+      "nucleus": 0.003990281377729834,
+      "host_projection": 0.0021587812144788212,
+      "interval": [
+        3.355315492702489e-05,
+        0.00030561423844587096
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0002821993502634661,
+      "bias": 0.0001660394343585554,
+      "input_sha256": "cd409cbb1f2032055a7b45506ac43b7938f2ab2029c5971e5cb300cbfde263a0"
+    },
+    {
+      "key": "injection_steep_host_2718_0.0005_1.22",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0009080185494537681,
+      "nucleus": 0.004186332130623242,
+      "host_projection": 0.0018709600271203312,
+      "interval": [
+        0.0006069049591177361,
+        0.0012070830325138712
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0011602061142504086,
+      "bias": 0.0004080185494537681,
+      "input_sha256": "f289234583cd679206b1b77445a384174633b065bb559f905afc87a3dc803b34"
+    },
+    {
+      "key": "injection_steep_host_2718_0.0005_4.88",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0006641021101983449,
+      "nucleus": 0.00398981188642876,
+      "host_projection": 0.0021606004816811008,
+      "interval": [
+        0.0005227159028614106,
+        0.000805432208577972
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0007816914734892743,
+      "bias": 0.00016410211019834487,
+      "input_sha256": "f289234583cd679206b1b77445a384174633b065bb559f905afc87a3dc803b34"
+    },
+    {
+      "key": "injection_steep_host_2718_0.002_1.22",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002407905643246087,
+      "nucleus": 0.004186312512088007,
+      "host_projection": 0.0018711439624999743,
+      "interval": [
+        0.00210679205291005,
+        0.002706970126306185
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0026600932080427225,
+      "bias": 0.0004079056432460871,
+      "input_sha256": "21e87f98ef4a12a83e771759c88bb4aa6a6803f376e70f2ca45fcc8fac70059e"
+    },
+    {
+      "key": "injection_steep_host_2718_0.002_4.88",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002164220876274559,
+      "nucleus": 0.0039897906274037965,
+      "host_projection": 0.0021605531249432016,
+      "interval": [
+        0.0020228346689376226,
+        0.0023055509746541837
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0022818102395654864,
+      "bias": 0.00016422087627455907,
+      "input_sha256": "21e87f98ef4a12a83e771759c88bb4aa6a6803f376e70f2ca45fcc8fac70059e"
+    },
+    {
+      "key": "injection_steep_host_2718_0.004_1.22",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004407755101635901,
+      "nucleus": 0.004186286354041054,
+      "host_projection": 0.001871389209672787,
+      "interval": [
+        0.004106641511299861,
+        0.004706819584695997
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0046599426664325335,
+      "bias": 0.0004077551016359012,
+      "input_sha256": "7d44794d6ca4c2e5f2b6da3a6907fb66de546f55fb56bbbf44bf2b9d26f72506"
+    },
+    {
+      "key": "injection_steep_host_2718_0.004_4.88",
+      "scenario": "steep_host",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004164379231042817,
+      "nucleus": 0.0039897622820372165,
+      "host_projection": 0.0021604899826260225,
+      "interval": [
+        0.004022993023705887,
+        0.004305709329422448
+      ],
+      "covers": false,
+      "posterior_upper95": 0.004281968594333751,
+      "bias": 0.0001643792310428169,
+      "input_sha256": "7d44794d6ca4c2e5f2b6da3a6907fb66de546f55fb56bbbf44bf2b9d26f72506"
+    },
+    {
+      "key": "injection_steep_host_31415_0.0_1.22",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0004951717913843464,
+      "nucleus": 0.0041940424343542716,
+      "host_projection": 0.0018114762327692535,
+      "interval": [
+        0.00019846231823917587,
+        0.0007988209418831983
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0007499863229301247,
+      "bias": 0.0004951717913843464,
+      "input_sha256": "d2ddea572911d854f664d74746941c20ffae5031592c74a936d6737bfc8b35e5"
+    },
+    {
+      "key": "injection_steep_host_31415_0.0_4.88",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00014806279502685652,
+      "nucleus": 0.003997470153011367,
+      "host_projection": 0.0022047654580146818,
+      "interval": [
+        2.3709100960409632e-05,
+        0.0002863825436494134
+      ],
+      "covers": false,
+      "posterior_upper95": 0.000262781546939184,
+      "bias": 0.00014806279502685652,
+      "input_sha256": "d2ddea572911d854f664d74746941c20ffae5031592c74a936d6737bfc8b35e5"
+    },
+    {
+      "key": "injection_steep_host_31415_0.0005_1.22",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0009948372493397836,
+      "nucleus": 0.0041940546476491305,
+      "host_projection": 0.001811818420359661,
+      "interval": [
+        0.0006978510810497509,
+        0.0012987604986277582
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0012499373560637007,
+      "bias": 0.0004948372493397836,
+      "input_sha256": "c03b948d8f432c7ed7b06f94c7d48e59662357ac0bd08aef6680ba36fd4b301b"
+    },
+    {
+      "key": "injection_steep_host_31415_0.0005_4.88",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.000644515905733341,
+      "nucleus": 0.003996682989842155,
+      "host_projection": 0.002208059038122254,
+      "interval": [
+        0.0005068606912259444,
+        0.0007855475075137646
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0007620251005321744,
+      "bias": 0.00014451590573334098,
+      "input_sha256": "c03b948d8f432c7ed7b06f94c7d48e59662357ac0bd08aef6680ba36fd4b301b"
+    },
+    {
+      "key": "injection_steep_host_31415_0.002_1.22",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002494724343132151,
+      "nucleus": 0.004194035029114,
+      "host_projection": 0.0018120023557392532,
+      "interval": [
+        0.0021977381748421046,
+        0.0027986475924201117
+      ],
+      "covers": false,
+      "posterior_upper95": 0.002749824449856054,
+      "bias": 0.0004947243431321509,
+      "input_sha256": "5a5d52824a5f1fcbab0e5f602b165a2b673fd1c27bd0c1e14a1a704acec90c49"
+    },
+    {
+      "key": "injection_steep_host_31415_0.002_4.88",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0021446346718095497,
+      "nucleus": 0.00399666173081724,
+      "host_projection": 0.002208011681384356,
+      "interval": [
+        0.0020069794573021518,
+        0.002285666273589972
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0022621438666083817,
+      "bias": 0.00014463467180954965,
+      "input_sha256": "5a5d52824a5f1fcbab0e5f602b165a2b673fd1c27bd0c1e14a1a704acec90c49"
+    },
+    {
+      "key": "injection_steep_host_31415_0.004_1.22",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004494573801521896,
+      "nucleus": 0.004194008871066983,
+      "host_projection": 0.00181224760291213,
+      "interval": [
+        0.004197587633231848,
+        0.004798497050809855
+      ],
+      "covers": false,
+      "posterior_upper95": 0.004749673908245797,
+      "bias": 0.0004945738015218956,
+      "input_sha256": "168426884000d2e29f4eae8a1d21441e129b4c5a026c97e246693e3873374c67"
+    },
+    {
+      "key": "injection_steep_host_31415_0.004_4.88",
+      "scenario": "steep_host",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00414479302657779,
+      "nucleus": 0.003996633385450591,
+      "host_projection": 0.002207948539067199,
+      "interval": [
+        0.0040071378120703945,
+        0.004285824628358215
+      ],
+      "covers": false,
+      "posterior_upper95": 0.004262302221376625,
+      "bias": 0.00014479302657779015,
+      "input_sha256": "168426884000d2e29f4eae8a1d21441e129b4c5a026c97e246693e3873374c67"
+    },
+    {
+      "key": "injection_offset_star_1729_0.0_1.22",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00012999156184855527,
+      "nucleus": 0.003948755646064789,
+      "host_projection": 0.0011564064156943054,
+      "interval": [
+        5.206182964733852e-06,
+        0.00035846977314559316
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00031284478819503577,
+      "bias": 0.00012999156184855527,
+      "input_sha256": "16a6595306fb92b435d7f4871c6a4dbf05275425fa7ec0e78f5ee60bb01d01f3"
+    },
+    {
+      "key": "injection_offset_star_1729_0.0_4.88",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 6.989193883794513e-05,
+      "nucleus": 0.003948681282515899,
+      "host_projection": 0.0012184974144575918,
+      "interval": [
+        3.0055141305767346e-06,
+        0.00018220798646198907
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00016104107802602954,
+      "bias": 6.989193883794513e-05,
+      "input_sha256": "16a6595306fb92b435d7f4871c6a4dbf05275425fa7ec0e78f5ee60bb01d01f3"
+    },
+    {
+      "key": "injection_offset_star_1729_0.0005_1.22",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005052823688900249,
+      "nucleus": 0.0039391352441723124,
+      "host_projection": 0.0012758373975542195,
+      "interval": [
+        0.00020164635767723021,
+        0.0008076208920062463
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000759260106448929,
+      "bias": 5.2823688900248715e-06,
+      "input_sha256": "d2f65cb6d7f27eb60f9ec9acf23ce89ae1a13ebd6d9f3f454bb2cdfeabef43fc"
+    },
+    {
+      "key": "injection_offset_star_1729_0.0005_4.88",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005169347379035052,
+      "nucleus": 0.003936086734825438,
+      "host_projection": 0.001264892559435599,
+      "interval": [
+        0.00037567951674686635,
+        0.0006561167203878391
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006350799895488392,
+      "bias": 1.6934737903505142e-05,
+      "input_sha256": "d2f65cb6d7f27eb60f9ec9acf23ce89ae1a13ebd6d9f3f454bb2cdfeabef43fc"
+    },
+    {
+      "key": "injection_offset_star_1729_0.002_1.22",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0019674951222191576,
+      "nucleus": 0.003935820141774741,
+      "host_projection": 0.001301242576757816,
+      "interval": [
+        0.0016623920316934891,
+        0.0022695625437540706
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022215740809351913,
+      "bias": -3.250487778084241e-05,
+      "input_sha256": "05250cbe4491baf642353fc067c370846abf1bad672e01dbe5cab585b56bfb74"
+    },
+    {
+      "key": "injection_offset_star_1729_0.002_4.88",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.001976001841848582,
+      "nucleus": 0.003927356925288586,
+      "host_projection": 0.0012947070446171227,
+      "interval": [
+        0.0018347466206919498,
+        0.0021151838243329227
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0020941470934939224,
+      "bias": -2.3998158151418078e-05,
+      "input_sha256": "05250cbe4491baf642353fc067c370846abf1bad672e01dbe5cab585b56bfb74"
+    },
+    {
+      "key": "injection_offset_star_1729_0.004_1.22",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.003915788246387798,
+      "nucleus": 0.003929502851162177,
+      "host_projection": 0.0013368720117049873,
+      "interval": [
+        0.0036125272071353743,
+        0.004211080591046399
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004166499960255338,
+      "bias": -8.421175361220199e-05,
+      "input_sha256": "6c6c3a64a1bebb9da2d097330f5690a4482d8f0001d88908ccad59aeae24695e"
+    },
+    {
+      "key": "injection_offset_star_1729_0.004_4.88",
+      "scenario": "offset_star",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0039214246471086876,
+      "nucleus": 0.00391571717923948,
+      "host_projection": 0.001334459691525819,
+      "interval": [
+        0.003780169425952052,
+        0.004060606629593025
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004039569898754026,
+      "bias": -7.857535289131252e-05,
+      "input_sha256": "6c6c3a64a1bebb9da2d097330f5690a4482d8f0001d88908ccad59aeae24695e"
+    },
+    {
+      "key": "injection_offset_star_2718_0.0_1.22",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00018654028401428544,
+      "nucleus": 0.004040776008220511,
+      "host_projection": 0.0010829645495536607,
+      "interval": [
+        1.1302388577702588e-05,
+        0.00044354209926310886
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0004000358514373449,
+      "bias": 0.00018654028401428544,
+      "input_sha256": "101d975ae70f26466d2df34666e906054485f489bd0bc66af645c69cd7fcf15b"
+    },
+    {
+      "key": "injection_offset_star_2718_0.0_4.88",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00010546000492113247,
+      "nucleus": 0.003983516941730014,
+      "host_projection": 0.0011777615932870604,
+      "interval": [
+        7.757714943410345e-06,
+        0.0002349291535052586
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00021239081691316428,
+      "bias": 0.00010546000492113247,
+      "input_sha256": "101d975ae70f26466d2df34666e906054485f489bd0bc66af645c69cd7fcf15b"
+    },
+    {
+      "key": "injection_offset_star_2718_0.0005_1.22",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0006216538243530951,
+      "nucleus": 0.004035509342231329,
+      "host_projection": 0.0011432117622008657,
+      "interval": [
+        0.0003209129482764991,
+        0.0009190914447393048
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008733045555687816,
+      "bias": 0.00012165382435309511,
+      "input_sha256": "b19fcad251f215a880996ea29f6d08d942d82b5ffc05df5b54a820bd0bbabe3b"
+    },
+    {
+      "key": "injection_offset_star_2718_0.0005_4.88",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005770743925749268,
+      "nucleus": 0.003977235826809392,
+      "host_projection": 0.0012013456903387323,
+      "interval": [
+        0.00043568818523799415,
+        0.0007184044909545555
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006946637558658578,
+      "bias": 7.707439257492678e-05,
+      "input_sha256": "b19fcad251f215a880996ea29f6d08d942d82b5ffc05df5b54a820bd0bbabe3b"
+    },
+    {
+      "key": "injection_offset_star_2718_0.002_1.22",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0020826726201305305,
+      "nucleus": 0.0040302722719340245,
+      "host_projection": 0.0011702473196472881,
+      "interval": [
+        0.0017830941559922198,
+        0.0023765370622211217
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002332154151333582,
+      "bias": 8.267262013053047e-05,
+      "input_sha256": "900eddc2dceec1cd62044c81ce14f8ab84afcc7ac85f12ce96b7d5765f228244"
+    },
+    {
+      "key": "injection_offset_star_2718_0.002_4.88",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00203614149651998,
+      "nucleus": 0.003968506017272552,
+      "host_projection": 0.001231160175520262,
+      "interval": [
+        0.0018947552891830678,
+        0.002177471594899629
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0021537308598109316,
+      "bias": 3.614149651998003e-05,
+      "input_sha256": "900eddc2dceec1cd62044c81ce14f8ab84afcc7ac85f12ce96b7d5765f228244"
+    },
+    {
+      "key": "injection_offset_star_2718_0.004_1.22",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004003316487675982,
+      "nucleus": 0.0039955197731439355,
+      "host_projection": 0.0012400894541879776,
+      "interval": [
+        0.003721136194778107,
+        0.004277905674625003
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004233512279915716,
+      "bias": 3.3164876759817982e-06,
+      "input_sha256": "adcbd980376aeb50a37d6c9231ee1f732f21b92abc219972b1a4a701cd57cad0"
+    },
+    {
+      "key": "injection_offset_star_2718_0.004_4.88",
+      "scenario": "offset_star",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.003981564301780124,
+      "nucleus": 0.003956866271223426,
+      "host_projection": 0.0012709128224289434,
+      "interval": [
+        0.0038401780944431873,
+        0.004122894400159748
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0040991536650710515,
+      "bias": -1.843569821987582e-05,
+      "input_sha256": "adcbd980376aeb50a37d6c9231ee1f732f21b92abc219972b1a4a701cd57cad0"
+    },
+    {
+      "key": "injection_offset_star_31415_0.0_1.22",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00023963421532763226,
+      "nucleus": 0.004045776859866559,
+      "host_projection": 0.0010573222432144376,
+      "interval": [
+        2.2232367521239502e-05,
+        0.0005067071465986036
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00046624619930525765,
+      "bias": 0.00023963421532763226,
+      "input_sha256": "25a5bfc9bb6804bc7f6ca382685b2c6d21dbdfb0ae1ba5973d9f29cebf3bc867"
+    },
+    {
+      "key": "injection_offset_star_31415_0.0_4.88",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 9.146414750227174e-05,
+      "nucleus": 0.003991786164768336,
+      "host_projection": 0.0012200500049673322,
+      "interval": [
+        6.508260574096627e-06,
+        0.00021735440464883284
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00019498939600292293,
+      "bias": 9.146414750227174e-05,
+      "input_sha256": "25a5bfc9bb6804bc7f6ca382685b2c6d21dbdfb0ae1ba5973d9f29cebf3bc867"
+    },
+    {
+      "key": "injection_offset_star_31415_0.0005_1.22",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0007042752545511117,
+      "nucleus": 0.004042968336445508,
+      "host_projection": 0.001088339259366497,
+      "interval": [
+        0.00041119254410508266,
+        0.0009896843521441942
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009478178047894124,
+      "bias": 0.0002042752545511117,
+      "input_sha256": "efe40de0383fb31c485972a9e6654a9bdc5a21e4f27572350528bdd848dfa079"
+    },
+    {
+      "key": "injection_offset_star_31415_0.0005_4.88",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005574881881099196,
+      "nucleus": 0.003984106930222779,
+      "host_projection": 0.0012488042467798848,
+      "interval": [
+        0.0004198329736025271,
+        0.0006985197898903472
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006749973829087571,
+      "bias": 5.748818810991964e-05,
+      "input_sha256": "efe40de0383fb31c485972a9e6654a9bdc5a21e4f27572350528bdd848dfa079"
+    },
+    {
+      "key": "injection_offset_star_31415_0.002_1.22",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0021663180333961695,
+      "nucleus": 0.004039584933746686,
+      "host_projection": 0.0011139302891823052,
+      "interval": [
+        0.0018737254749098145,
+        0.0024489428858650232
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0024068813073106943,
+      "bias": 0.00016631803339616945,
+      "input_sha256": "31d662a1a875b38648846fdff4cd16348298785d618c9b1b7fece0dbcc653caf"
+    },
+    {
+      "key": "injection_offset_star_31415_0.002_4.88",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020165552920550014,
+      "nucleus": 0.003975377120685933,
+      "host_projection": 0.001278618731961401,
+      "interval": [
+        0.001878900077547613,
+        0.002157586893835433
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002134064486853843,
+      "bias": 1.6555292055001405e-05,
+      "input_sha256": "31d662a1a875b38648846fdff4cd16348298785d618c9b1b7fece0dbcc653caf"
+    },
+    {
+      "key": "injection_offset_star_31415_0.004_1.22",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004112711257419326,
+      "nucleus": 0.004031163114724114,
+      "host_projection": 0.0011519699952063174,
+      "interval": [
+        0.00382279047131419,
+        0.004389412370472671
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004348462674108091,
+      "bias": 0.00011271125741932602,
+      "input_sha256": "e415019dcebb2646e499bd3f5ad33a21ac18cdb9f3cbb8f9569daef2531e3a38"
+    },
+    {
+      "key": "injection_offset_star_31415_0.004_4.88",
+      "scenario": "offset_star",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00396197809731512,
+      "nucleus": 0.0039637373746367905,
+      "host_projection": 0.0013183713788701048,
+      "interval": [
+        0.003824322882807717,
+        0.004103009699095537
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004079487292113947,
+      "bias": -3.802190268488003e-05,
+      "input_sha256": "e415019dcebb2646e499bd3f5ad33a21ac18cdb9f3cbb8f9569daef2531e3a38"
+    },
+    {
+      "key": "injection_contaminated_1729_0.0_1.22",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 7.694595275226092e-05,
+      "nucleus": 0.003620737506621091,
+      "host_projection": 0.0019563209293862794,
+      "interval": [
+        2.283583388968939e-06,
+        0.00025451483514394126
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00020743547424182805,
+      "bias": 7.694595275226092e-05,
+      "input_sha256": "760466d54dc9d6aba137618c4c0ff83c7c12d0bbf6a3fc48082e3e9be3c7019c"
+    },
+    {
+      "key": "injection_contaminated_1729_0.0_4.88",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005413270114927755,
+      "nucleus": 0.0038601982495753374,
+      "host_projection": 0.0014285678376584688,
+      "interval": [
+        0.00040007179033613795,
+        0.0006805089939771107
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0006594722631381108,
+      "bias": 0.0005413270114927755,
+      "input_sha256": "760466d54dc9d6aba137618c4c0ff83c7c12d0bbf6a3fc48082e3e9be3c7019c"
+    },
+    {
+      "key": "injection_contaminated_1729_0.0005_1.22",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0003300226478570049,
+      "nucleus": 0.003599383325079408,
+      "host_projection": 0.0022007236341912025,
+      "interval": [
+        6.00387912635035e-05,
+        0.0006269748754153465
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0005786024939440891,
+      "bias": -0.00016997735214299513,
+      "input_sha256": "505d9851dcc3ce02f03f7c25d055c188f5c177b8b9f0284a41cf6dca56824f99"
+    },
+    {
+      "key": "injection_contaminated_1729_0.0005_4.88",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0010413666001848371,
+      "nucleus": 0.003860191163233665,
+      "host_projection": 0.001428552052079184,
+      "interval": [
+        0.0009001113790281941,
+        0.0011805485826691668
+      ],
+      "covers": false,
+      "posterior_upper95": 0.001159511851830167,
+      "bias": 0.0005413666001848371,
+      "input_sha256": "505d9851dcc3ce02f03f7c25d055c188f5c177b8b9f0284a41cf6dca56824f99"
+    },
+    {
+      "key": "injection_contaminated_1729_0.002_1.22",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0018227496834201922,
+      "nucleus": 0.003598673285136179,
+      "host_projection": 0.0022080812688361714,
+      "interval": [
+        0.0015175352555349035,
+        0.0021256300644261986
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0020770886866218453,
+      "bias": -0.00017725031657980783,
+      "input_sha256": "1cf423518156270ef17ff73a130b5e8f18e9f75de0f65ac4ed46b73b3cfb1491"
+    },
+    {
+      "key": "injection_contaminated_1729_0.002_4.88",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002541485366261029,
+      "nucleus": 0.003860169904208706,
+      "host_projection": 0.0014285046953412895,
+      "interval": [
+        0.0024002301451043996,
+        0.0026806673487453727
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0026596306179063724,
+      "bias": 0.0005414853662610289,
+      "input_sha256": "1cf423518156270ef17ff73a130b5e8f18e9f75de0f65ac4ed46b73b3cfb1491"
+    },
+    {
+      "key": "injection_contaminated_1729_0.004_1.22",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0038225991418100063,
+      "nucleus": 0.0035986471270892263,
+      "host_projection": 0.0022083265160089765,
+      "interval": [
+        0.0035173847139247172,
+        0.004125479522816012
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004076938145011659,
+      "bias": -0.00017740085818999376,
+      "input_sha256": "90ddc3b3c918e15105331e5446979403bddac90496281cbcbf26afd32d348d3c"
+    },
+    {
+      "key": "injection_contaminated_1729_0.004_4.88",
+      "scenario": "contaminated",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004541643721029311,
+      "nucleus": 0.0038601415588420873,
+      "host_projection": 0.0014284415530241132,
+      "interval": [
+        0.004400388499872661,
+        0.004680825703513633
+      ],
+      "covers": false,
+      "posterior_upper95": 0.004659788972674634,
+      "bias": 0.0005416437210293105,
+      "input_sha256": "90ddc3b3c918e15105331e5446979403bddac90496281cbcbf26afd32d348d3c"
+    },
+    {
+      "key": "injection_contaminated_2718_0.0_1.22",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00010322750074687095,
+      "nucleus": 0.0037095106678933227,
+      "host_projection": 0.0019126285299712025,
+      "interval": [
+        3.5764853178897263e-06,
+        0.00029880563441017963
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00026046587216712995,
+      "bias": 0.00010322750074687095,
+      "input_sha256": "695e84880f209b990bf92c89451f759f892593baa7c97c5b6a29eb7faa2224d3"
+    },
+    {
+      "key": "injection_contaminated_2718_0.0_4.88",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0006014666661641963,
+      "nucleus": 0.0039013473415592734,
+      "host_projection": 0.001365020968561599,
+      "interval": [
+        0.000460080458827266,
+        0.0007427967645438273
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0007190560294551297,
+      "bias": 0.0006014666661641963,
+      "input_sha256": "695e84880f209b990bf92c89451f759f892593baa7c97c5b6a29eb7faa2224d3"
+    },
+    {
+      "key": "injection_contaminated_2718_0.0005_1.22",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0004409424708237238,
+      "nucleus": 0.003695254464689336,
+      "host_projection": 0.0020735431131836146,
+      "interval": [
+        0.0001449310952902934,
+        0.000739222873588167
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006921857304793102,
+      "bias": -5.9057529176276204e-05,
+      "input_sha256": "dfde9ee14c253fe3ec52d56343a4b2aceaef30a2ff000b5f396f508f6e949133"
+    },
+    {
+      "key": "injection_contaminated_2718_0.0005_4.88",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0011015062548562714,
+      "nucleus": 0.0039013402552176266,
+      "host_projection": 0.0013650051829823028,
+      "interval": [
+        0.0009601200475193311,
+        0.0012428363532358923
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0012190956181471948,
+      "bias": 0.0006015062548562714,
+      "input_sha256": "dfde9ee14c253fe3ec52d56343a4b2aceaef30a2ff000b5f396f508f6e949133"
+    },
+    {
+      "key": "injection_contaminated_2718_0.002_1.22",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0019398649018364058,
+      "nucleus": 0.003695171153855122,
+      "host_projection": 0.002074686115196904,
+      "interval": [
+        0.0016387235854695553,
+        0.0022389207887437115
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002192034378374839,
+      "bias": -6.013509816359423e-05,
+      "input_sha256": "59b0ff11a8b44631acccf793ddfcdb56531f8ba63d02c8b0b20bbc67a0449799"
+    },
+    {
+      "key": "injection_contaminated_2718_0.002_4.88",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002601625020932475,
+      "nucleus": 0.0039013189961926566,
+      "host_projection": 0.0013649578262444136,
+      "interval": [
+        0.0024602388135955325,
+        0.0027429551193120937
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0027192143842233963,
+      "bias": 0.0006016250209324751,
+      "input_sha256": "59b0ff11a8b44631acccf793ddfcdb56531f8ba63d02c8b0b20bbc67a0449799"
+    },
+    {
+      "key": "injection_contaminated_2718_0.004_1.22",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0039397143602261375,
+      "nucleus": 0.003695144995808133,
+      "host_projection": 0.0020749313623698055,
+      "interval": [
+        0.0036385730438592803,
+        0.004238770247133437
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004191883836764565,
+      "bias": -6.028563977386256e-05,
+      "input_sha256": "bd62f12f1760d4a10ea1e14dd45c1e81da285c4502eab63eb075435068177152"
+    },
+    {
+      "key": "injection_contaminated_2718_0.004_4.88",
+      "scenario": "contaminated",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004601783375700687,
+      "nucleus": 0.003901290650826009,
+      "host_projection": 0.0013648946839272477,
+      "interval": [
+        0.004460397168363787,
+        0.004743113474080348
+      ],
+      "covers": false,
+      "posterior_upper95": 0.004719372738991651,
+      "bias": 0.0006017833757006865,
+      "input_sha256": "bd62f12f1760d4a10ea1e14dd45c1e81da285c4502eab63eb075435068177152"
+    },
+    {
+      "key": "injection_contaminated_31415_0.0_1.22",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00013248716352753635,
+      "nucleus": 0.003710537044563273,
+      "host_projection": 0.0019107555045226661,
+      "interval": [
+        5.190704108258616e-06,
+        0.00036578008199328414
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00032165931965791875,
+      "bias": 0.00013248716352753635,
+      "input_sha256": "a7be454f831030a350b4964b07a9da2e58126b395b5a42bdbc1382cf0ab64168"
+    },
+    {
+      "key": "injection_contaminated_31415_0.0_4.88",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005818804616991844,
+      "nucleus": 0.00390821844497264,
+      "host_projection": 0.0014124795250027619,
+      "interval": [
+        0.00044422524719179066,
+        0.0007229120634796108
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0006993896564980207,
+      "bias": 0.0005818804616991844,
+      "input_sha256": "a7be454f831030a350b4964b07a9da2e58126b395b5a42bdbc1382cf0ab64168"
+    },
+    {
+      "key": "injection_contaminated_31415_0.0005_1.22",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005269499802974942,
+      "nucleus": 0.00370289535970307,
+      "host_projection": 0.0020152150400499567,
+      "interval": [
+        0.0002300341914529987,
+        0.0008307579365439386
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007819042613676811,
+      "bias": 2.6949980297494183e-05,
+      "input_sha256": "f82cb1c25395938cf220db513d1b426eae7578b039228626346cecd9f1558d11"
+    },
+    {
+      "key": "injection_contaminated_31415_0.0005_4.88",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0010819200503912572,
+      "nucleus": 0.003908211358630994,
+      "host_projection": 0.001412463739423465,
+      "interval": [
+        0.0009442648358838589,
+        0.001222951652171679
+      ],
+      "covers": false,
+      "posterior_upper95": 0.001199429245190089,
+      "bias": 0.0005819200503912572,
+      "input_sha256": "f82cb1c25395938cf220db513d1b426eae7578b039228626346cecd9f1558d11"
+    },
+    {
+      "key": "injection_contaminated_31415_0.002_1.22",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0020266974732579416,
+      "nucleus": 0.003702897665825221,
+      "host_projection": 0.002015524710046228,
+      "interval": [
+        0.001729674300803465,
+        0.0023306437035972944
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002281776768049383,
+      "bias": 2.669747325794152e-05,
+      "input_sha256": "7d15173e30465d413b313fadc3b5ea03d9fe29d32cad86b487edd3720f2a410d"
+    },
+    {
+      "key": "injection_contaminated_31415_0.002_4.88",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002582038816467446,
+      "nucleus": 0.003908190099606045,
+      "host_projection": 0.0014124163826855752,
+      "interval": [
+        0.00244438360196006,
+        0.00272307041824788
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00269954801126629,
+      "bias": 0.0005820388164674462,
+      "input_sha256": "7d15173e30465d413b313fadc3b5ea03d9fe29d32cad86b487edd3720f2a410d"
+    },
+    {
+      "key": "injection_contaminated_31415_0.004_1.22",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00402654693164768,
+      "nucleus": 0.0037028715077782734,
+      "host_projection": 0.002015769957219108,
+      "interval": [
+        0.003729523759193208,
+        0.004330493161987037
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0042816262264391254,
+      "bias": 2.6546931647679697e-05,
+      "input_sha256": "64bd7705ff1fffab4a94ae7043467e0116694913a926cfd4dad62c3fe9175919"
+    },
+    {
+      "key": "injection_contaminated_31415_0.004_4.88",
+      "scenario": "contaminated",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004582197171235716,
+      "nucleus": 0.003908161754239432,
+      "host_projection": 0.0014123532403683898,
+      "interval": [
+        0.004444541956728329,
+        0.00472322877301615
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00469970636603456,
+      "bias": 0.0005821971712357162,
+      "input_sha256": "64bd7705ff1fffab4a94ae7043467e0116694913a926cfd4dad62c3fe9175919"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.0_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0001630582520834859,
+      "nucleus": 0.0030195595714274793,
+      "host_projection": 0.001377119601662394,
+      "interval": [
+        7.411036713945305e-06,
+        0.000417399853529389
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00036855296900371344,
+      "bias": 0.0001630582520834859,
+      "input_sha256": "528c3ac8e38044de8227da249f6bd433a2c761049ac99770f12c8d1f0fe8ec74"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.0_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 7.779251479823283e-05,
+      "nucleus": 0.002992454665056197,
+      "host_projection": 0.0014706202285908704,
+      "interval": [
+        3.853251044766368e-06,
+        0.00019442297616613241
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00017392269814042207,
+      "bias": 7.779251479823283e-05,
+      "input_sha256": "528c3ac8e38044de8227da249f6bd433a2c761049ac99770f12c8d1f0fe8ec74"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.0005_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005922319639409384,
+      "nucleus": 0.0030136950472047386,
+      "host_projection": 0.0014473289521865869,
+      "interval": [
+        0.00028702348233132036,
+        0.0008950805723970646
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008465391492266297,
+      "bias": 9.223196394093837e-05,
+      "input_sha256": "f454b7e9f8b5e2c0e48e4a4565fc04da147039c65bc8ac2c9e37a801895913ce"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.0005_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005469877350746164,
+      "nucleus": 0.002984732268069331,
+      "host_projection": 0.0014993162763774557,
+      "interval": [
+        0.000405732513917979,
+        0.0006861697175589517
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006651329867199519,
+      "bias": 4.698773507461637e-05,
+      "input_sha256": "f454b7e9f8b5e2c0e48e4a4565fc04da147039c65bc8ac2c9e37a801895913ce"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.002_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0020920817367320304,
+      "nucleus": 0.003013667453896086,
+      "host_projection": 0.0014475527491004604,
+      "interval": [
+        0.0017868673088467482,
+        0.0023949621177380433
+      ],
+      "covers": true,
+      "posterior_upper95": 0.00234642073993369,
+      "bias": 9.208173673203035e-05,
+      "input_sha256": "bd59e4b8612cab3c029569260c42cd3c0a7efd402b33fabfa64a508bb82a0643"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.002_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0020471065011508117,
+      "nucleus": 0.0029847110090443422,
+      "host_projection": 0.001499268919639579,
+      "interval": [
+        0.001905851279994174,
+        0.002186288483635147
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0021652517527961466,
+      "bias": 4.7106501150811705e-05,
+      "input_sha256": "bd59e4b8612cab3c029569260c42cd3c0a7efd402b33fabfa64a508bb82a0643"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.004_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004091931195121855,
+      "nucleus": 0.003013641295849101,
+      "host_projection": 0.001447797996273279,
+      "interval": [
+        0.003786716767236557,
+        0.004394811576127852
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004346270198323499,
+      "bias": 9.193119512185526e-05,
+      "input_sha256": "3150853b3f76eb1f39d3f1013e15d9d0bf27fdeecbc66be7e1a8cefe60451dd1"
+    },
+    {
+      "key": "injection_resolved_nucleus_1729_0.004_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004047264855919087,
+      "nucleus": 0.002984682663677756,
+      "host_projection": 0.001499205777322386,
+      "interval": [
+        0.003906009634762444,
+        0.004186446838403417
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004165410107564418,
+      "bias": 4.726485591908733e-05,
+      "input_sha256": "3150853b3f76eb1f39d3f1013e15d9d0bf27fdeecbc66be7e1a8cefe60451dd1"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.0_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00023584094218346722,
+      "nucleus": 0.0031123565370586377,
+      "host_projection": 0.0012877600486288809,
+      "interval": [
+        1.978002803071187e-05,
+        0.0005117862695334716
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0004682692273231362,
+      "bias": 0.00023584094218346722,
+      "input_sha256": "50ba69b33bfed40dde21a0398abfed013fcfbb3e5ae59d66f424c033c3368eb6"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.0_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00011740424969266015,
+      "nucleus": 0.0030282452289991935,
+      "host_projection": 0.0014262332584418802,
+      "interval": [
+        1.1251769051063207e-05,
+        0.00025010401227617326
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00022732886079869483,
+      "bias": 0.00011740424969266015,
+      "input_sha256": "50ba69b33bfed40dde21a0398abfed013fcfbb3e5ae59d66f424c033c3368eb6"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.0005_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0007091051642784788,
+      "nucleus": 0.0031101714498780663,
+      "host_projection": 0.0013141802415979425,
+      "interval": [
+        0.000408162966955697,
+        0.0010074620511776708
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009610165157837335,
+      "bias": 0.00020910516427847874,
+      "input_sha256": "a6780a9c5ba5c16381c39818a7cef1c0d9462a9a4e149048abf500e92921a8d2"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.0005_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.000607127389746037,
+      "nucleus": 0.003025881360053282,
+      "host_projection": 0.0014357694072805883,
+      "interval": [
+        0.00046574118240910473,
+        0.0007484574881256661
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007247167530369684,
+      "bias": 0.00010712738974603703,
+      "input_sha256": "a6780a9c5ba5c16381c39818a7cef1c0d9462a9a4e149048abf500e92921a8d2"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.002_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0022089922580708138,
+      "nucleus": 0.0031101518313428286,
+      "host_projection": 0.0013143641769775714,
+      "interval": [
+        0.0019080500607480348,
+        0.0025073491449700085
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0024609036095760714,
+      "bias": 0.0002089922580708137,
+      "input_sha256": "2e46615af5f6515e72ad1a9e57fed7b228d34d851da3b0dd3aef5c6f94610ff4"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.002_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0021072461558222363,
+      "nucleus": 0.0030258601010283008,
+      "host_projection": 0.0014357220505426982,
+      "interval": [
+        0.001965859948485306,
+        0.002248576254201867
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022248355191131696,
+      "bias": 0.00010724615582223627,
+      "input_sha256": "2e46615af5f6515e72ad1a9e57fed7b228d34d851da3b0dd3aef5c6f94610ff4"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.004_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004208841716460601,
+      "nucleus": 0.0031101256732958393,
+      "host_projection": 0.0013146094241504337,
+      "interval": [
+        0.003907899519137794,
+        0.004507198603359767
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0044607530679658305,
+      "bias": 0.00020884171646060132,
+      "input_sha256": "a34c3390d02c301b36c298ad8b2180555618284e10dd3ffd3fb5df31f56e267f"
+    },
+    {
+      "key": "injection_resolved_nucleus_2718_0.004_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0041074045105904955,
+      "nucleus": 0.003025831755661707,
+      "host_projection": 0.001435658908225535,
+      "interval": [
+        0.0039660183032535585,
+        0.00424873460897012
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004224993873881423,
+      "bias": 0.00010740451059049541,
+      "input_sha256": "a34c3390d02c301b36c298ad8b2180555618284e10dd3ffd3fb5df31f56e267f"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.0_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00030365646036985673,
+      "nucleus": 0.003118473938924272,
+      "host_projection": 0.0012474404217722164,
+      "interval": [
+        4.48866828367848e-05,
+        0.0005913653946738294
+      ],
+      "covers": false,
+      "posterior_upper95": 0.000547045737247588,
+      "bias": 0.00030365646036985673,
+      "input_sha256": "a8a8ae1464b8bd963fcc84c36e3ddb27410c68988f0246871d1353ae77c5c2c7"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.0_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00010255106124013753,
+      "nucleus": 0.003036364462573553,
+      "host_projection": 0.0014692424710323335,
+      "interval": [
+        8.017079548399624e-06,
+        0.00023226038726130045
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00020948421500411124,
+      "bias": 0.00010255106124013753,
+      "input_sha256": "a8a8ae1464b8bd963fcc84c36e3ddb27410c68988f0246871d1353ae77c5c2c7"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.0005_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0007943382935737812,
+      "nucleus": 0.003117796454170083,
+      "host_projection": 0.0012566539315389,
+      "interval": [
+        0.0004987849518993366,
+        0.0010898602382400475
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0010452222559790756,
+      "bias": 0.00029433829357378117,
+      "input_sha256": "b69f60ee91ffefd25902501018f2f2ad03fe9baa6ebbd718766a62863f805030"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.0005_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005875411852810365,
+      "nucleus": 0.003032752463466708,
+      "host_projection": 0.0014832279637217393,
+      "interval": [
+        0.0004498859707736409,
+        0.0007285727870614611
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007050503800798709,
+      "bias": 8.75411852810365e-05,
+      "input_sha256": "b69f60ee91ffefd25902501018f2f2ad03fe9baa6ebbd718766a62863f805030"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.002_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0022942253873661196,
+      "nucleus": 0.0031177768356348405,
+      "host_projection": 0.0012568378669185207,
+      "interval": [
+        0.0019986720456916826,
+        0.002589747332032393
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0025451093497714217,
+      "bias": 0.0002942253873661196,
+      "input_sha256": "459d8f4d96a3ad58e0b386dbba6f108067223c9f4dbed1d584ac7f357702cd57"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.002_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002087659951357224,
+      "nucleus": 0.003032731204441735,
+      "host_projection": 0.0014831806069838572,
+      "interval": [
+        0.0019500047368498363,
+        0.0022286915531376564
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022051691461560663,
+      "bias": 8.765995135722382e-05,
+      "input_sha256": "459d8f4d96a3ad58e0b386dbba6f108067223c9f4dbed1d584ac7f357702cd57"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.004_1.22",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004294074845755933,
+      "nucleus": 0.003117750677587866,
+      "host_projection": 0.0012570831140913579,
+      "interval": [
+        0.003998521504081474,
+        0.004589596790422185
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004544958808161213,
+      "bias": 0.00029407484575593324,
+      "input_sha256": "541b8b3d2b30c4c18176cd629ecd502864e94e93be8bec131abe40ede7ca0fe2"
+    },
+    {
+      "key": "injection_resolved_nucleus_31415_0.004_4.88",
+      "scenario": "resolved_nucleus",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00408781830612552,
+      "nucleus": 0.0030327028590751057,
+      "host_projection": 0.0014831174646666619,
+      "interval": [
+        0.003950163091618118,
+        0.004228849907905939
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004205327500924349,
+      "bias": 8.781830612551982e-05,
+      "input_sha256": "541b8b3d2b30c4c18176cd629ecd502864e94e93be8bec131abe40ede7ca0fe2"
+    },
+    {
+      "key": "injection_single_roll_1729_0.0_1.22",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0001741763110365519,
+      "nucleus": 0.003960425125370974,
+      "host_projection": 0.0010970359939227003,
+      "interval": [
+        9.64646102205128e-06,
+        0.0004277794865794663
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00038167502161482895,
+      "bias": 0.0001741763110365519,
+      "input_sha256": "6de99b4091dcbdc5398928ba349b2cef0b8bed5f174dc201c9adfc344e997b46"
+    },
+    {
+      "key": "injection_single_roll_1729_0.0_4.88",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 9.212878382969646e-05,
+      "nucleus": 0.003945687247425258,
+      "host_projection": 0.0011834766347134922,
+      "interval": [
+        6.01398822849384e-06,
+        0.00021487569988141373
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00019440717411313167,
+      "bias": 9.212878382969646e-05,
+      "input_sha256": "6de99b4091dcbdc5398928ba349b2cef0b8bed5f174dc201c9adfc344e997b46"
+    },
+    {
+      "key": "injection_single_roll_1729_0.0005_1.22",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0006208350258470869,
+      "nucleus": 0.003952646822285956,
+      "host_projection": 0.001150598362375432,
+      "interval": [
+        0.0003258016537765686,
+        0.0009092648900053071
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0008656173240536251,
+      "bias": 0.00012083502584708686,
+      "input_sha256": "ade1371d530b8356967452ae1e924afd4cc5ca0fc5bbf37c942b409e15ec74ee"
+    },
+    {
+      "key": "injection_single_roll_1729_0.0005_4.88",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005724707017555976,
+      "nucleus": 0.003940325369117302,
+      "host_projection": 0.0012018421267659463,
+      "interval": [
+        0.0004325746368594251,
+        0.0007101610794422213
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006894265158468731,
+      "bias": 7.247070175559758e-05,
+      "input_sha256": "ade1371d530b8356967452ae1e924afd4cc5ca0fc5bbf37c942b409e15ec74ee"
+    },
+    {
+      "key": "injection_single_roll_1729_0.002_1.22",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0021206379682148758,
+      "nucleus": 0.003952586800920692,
+      "host_projection": 0.0011508538701332257,
+      "interval": [
+        0.0018256045961443609,
+        0.0024090678323730992
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0023654202664214175,
+      "bias": 0.00012063796821487572,
+      "input_sha256": "0e06f8eb9453579d3c5c3034ce13b6045ccb7480d3cf7542d12684e4added1b9"
+    },
+    {
+      "key": "injection_single_roll_1729_0.002_4.88",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002072526220808355,
+      "nucleus": 0.0039402923774302006,
+      "host_projection": 0.0012018387564294495,
+      "interval": [
+        0.0019326301559121789,
+        0.002210216598494975
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002189482034899627,
+      "bias": 7.252622080835495e-05,
+      "input_sha256": "0e06f8eb9453579d3c5c3034ce13b6045ccb7480d3cf7542d12684e4added1b9"
+    },
+    {
+      "key": "injection_single_roll_1729_0.004_1.22",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004120375224705212,
+      "nucleus": 0.003952506772433736,
+      "host_projection": 0.0011511945471436539,
+      "interval": [
+        0.0038253418526346997,
+        0.004408805088863438
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004365157522911755,
+      "bias": 0.00012037522470521173,
+      "input_sha256": "d53db11ae3fedb2723d77c818c218b16b00fced174fbf7b0bc0ff6e3514af54a"
+    },
+    {
+      "key": "injection_single_roll_1729_0.004_4.88",
+      "scenario": "single_roll",
+      "seed": 1729,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004072600246212035,
+      "nucleus": 0.0039402483885141405,
+      "host_projection": 0.0012018342626474283,
+      "interval": [
+        0.003932704181315867,
+        0.004210290623898664
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004189556060303316,
+      "bias": 7.260024621203506e-05,
+      "input_sha256": "d53db11ae3fedb2723d77c818c218b16b00fced174fbf7b0bc0ff6e3514af54a"
+    },
+    {
+      "key": "injection_single_roll_2718_0.0_1.22",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00022061878758790506,
+      "nucleus": 0.004049585799751529,
+      "host_projection": 0.0010838956763380208,
+      "interval": [
+        1.7770402530427997e-05,
+        0.00047788072466014084
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00043867722786475604,
+      "bias": 0.00022061878758790506,
+      "input_sha256": "f32d7ea16b45397c2bc587c120ad110cd0a4ef6d5a5d35f54d4d2d16b69b9160"
+    },
+    {
+      "key": "injection_single_roll_2718_0.0_4.88",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 9.633370397261191e-05,
+      "nucleus": 0.00397937184775926,
+      "host_projection": 0.0012261186681955538,
+      "interval": [
+        6.605566046868273e-06,
+        0.000221535253965441
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00019962085319489783,
+      "bias": 9.633370397261191e-05,
+      "input_sha256": "f32d7ea16b45397c2bc587c120ad110cd0a4ef6d5a5d35f54d4d2d16b69b9160"
+    },
+    {
+      "key": "injection_single_roll_2718_0.0005_1.22",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0006917444116606308,
+      "nucleus": 0.004045618809266067,
+      "host_projection": 0.0011128084162794348,
+      "interval": [
+        0.00040275293212466606,
+        0.0009715749937690866
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0009321338240239676,
+      "bias": 0.0001917444116606308,
+      "input_sha256": "080725b479cbcff470c8accd3758a9020c624e3052f33533f4e21f315fff2781"
+    },
+    {
+      "key": "injection_single_roll_2718_0.0005_4.88",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005779055630798961,
+      "nucleus": 0.003974774691715176,
+      "host_projection": 0.001243179236318318,
+      "interval": [
+        0.00043796578264319294,
+        0.0007175834013006312
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0006942432129811294,
+      "bias": 7.790556307989604e-05,
+      "input_sha256": "080725b479cbcff470c8accd3758a9020c624e3052f33533f4e21f315fff2781"
+    },
+    {
+      "key": "injection_single_roll_2718_0.002_1.22",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002191547354028436,
+      "nucleus": 0.004045558787900779,
+      "host_projection": 0.001113063924037223,
+      "interval": [
+        0.001902555874492466,
+        0.002471377936136886
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0024319367663917677,
+      "bias": 0.00019154735402843615,
+      "input_sha256": "5181c7da97af25d63c1c82ec3898b75f72b5ba91fd635ee8a5f60ba0df996ca9"
+    },
+    {
+      "key": "injection_single_roll_2718_0.002_4.88",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002077961082132651,
+      "nucleus": 0.003974741700028069,
+      "host_projection": 0.0012431758659818062,
+      "interval": [
+        0.001938021301695957,
+        0.002217638920353395
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002194298732033893,
+      "bias": 7.796108213265103e-05,
+      "input_sha256": "5181c7da97af25d63c1c82ec3898b75f72b5ba91fd635ee8a5f60ba0df996ca9"
+    },
+    {
+      "key": "injection_single_roll_2718_0.004_1.22",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.004191284610518832,
+      "nucleus": 0.004045478759413791,
+      "host_projection": 0.001113404601047613,
+      "interval": [
+        0.003902293130982849,
+        0.0044711151926272695
+      ],
+      "covers": true,
+      "posterior_upper95": 0.00443167402288215,
+      "bias": 0.00019128461051883157,
+      "input_sha256": "735bc742c4d0072d9e9eb363fb78eacdff7f6a5e495fda456f496ba8e0221eb2"
+    },
+    {
+      "key": "injection_single_roll_2718_0.004_4.88",
+      "scenario": "single_roll",
+      "seed": 2718,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.004078035107536375,
+      "nucleus": 0.00397469771111198,
+      "host_projection": 0.0012431713721997892,
+      "interval": [
+        0.003938095327099644,
+        0.004217712945757082
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004194372757437581,
+      "bias": 7.80351075363745e-05,
+      "input_sha256": "735bc742c4d0072d9e9eb363fb78eacdff7f6a5e495fda456f496ba8e0221eb2"
+    },
+    {
+      "key": "injection_single_roll_31415_0.0_1.22",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 1.22,
+      "recovered": 0.00013882122077476792,
+      "nucleus": 0.004105562287389781,
+      "host_projection": 0.0011658095218397373,
+      "interval": [
+        6.469848518938427e-06,
+        0.00037054465153844217
+      ],
+      "covers": false,
+      "posterior_upper95": 0.0003305393689732558,
+      "bias": 0.00013882122077476792,
+      "input_sha256": "e9ced9b24bb0d89affc21df7e50b78ede6a56a1493d2738f1efa063f124e411c"
+    },
+    {
+      "key": "injection_single_roll_31415_0.0_4.88",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.0,
+      "scale_arcsec": 4.88,
+      "recovered": 8.938403414740953e-05,
+      "nucleus": 0.0040026342499876,
+      "host_projection": 0.0012394762910474338,
+      "interval": [
+        6.208553140908699e-06,
+        0.00021350833856913752
+      ],
+      "covers": false,
+      "posterior_upper95": 0.00019137157937752978,
+      "bias": 8.938403414740953e-05,
+      "input_sha256": "e9ced9b24bb0d89affc21df7e50b78ede6a56a1493d2738f1efa063f124e411c"
+    },
+    {
+      "key": "injection_single_roll_31415_0.0005_1.22",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0005514395292209305,
+      "nucleus": 0.004094093371916032,
+      "host_projection": 0.0012533639957063212,
+      "interval": [
+        0.00026432480201108853,
+        0.0008458622753680948
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0007979757841980586,
+      "bias": 5.1439529220930445e-05,
+      "input_sha256": "2745a2179fe528f98c6ac85d6eb983fe7e995797ec4e707bca2411c2781a1ecb"
+    },
+    {
+      "key": "injection_single_roll_31415_0.0005_4.88",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.0005,
+      "scale_arcsec": 4.88,
+      "recovered": 0.0005686304979990757,
+      "nucleus": 0.003997190706824872,
+      "host_projection": 0.0012587616785125033,
+      "interval": [
+        0.00043200376145524253,
+        0.0007081248315562364
+      ],
+      "covers": true,
+      "posterior_upper95": 0.000685212842118808,
+      "bias": 6.863049799907565e-05,
+      "input_sha256": "2745a2179fe528f98c6ac85d6eb983fe7e995797ec4e707bca2411c2781a1ecb"
+    },
+    {
+      "key": "injection_single_roll_31415_0.002_1.22",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 1.22,
+      "recovered": 0.002051204058656809,
+      "nucleus": 0.004094043948295492,
+      "host_projection": 0.0012536534579767685,
+      "interval": [
+        0.0017638041808558647,
+        0.00234565870444882
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0022977757939217267,
+      "bias": 5.120405865680902e-05,
+      "input_sha256": "26618a0578bfa675ff59acc4c80c54f465e8478228f4e7a11eca66bda0a6fdec"
+    },
+    {
+      "key": "injection_single_roll_31415_0.002_4.88",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.002,
+      "scale_arcsec": 4.88,
+      "recovered": 0.002068686017051845,
+      "nucleus": 0.00399715771513778,
+      "host_projection": 0.0012587583081759986,
+      "interval": [
+        0.0019320592805080012,
+        0.002208180350608995
+      ],
+      "covers": true,
+      "posterior_upper95": 0.002185268361171567,
+      "bias": 6.868601705184484e-05,
+      "input_sha256": "26618a0578bfa675ff59acc4c80c54f465e8478228f4e7a11eca66bda0a6fdec"
+    },
+    {
+      "key": "injection_single_roll_31415_0.004_1.22",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 1.22,
+      "recovered": 0.0040509413151472795,
+      "nucleus": 0.00409396391980856,
+      "host_projection": 0.0012539941349870793,
+      "interval": [
+        0.0037635414373463176,
+        0.004345395960939273
+      ],
+      "covers": true,
+      "posterior_upper95": 0.004297513050412179,
+      "bias": 5.094131514727946e-05,
+      "input_sha256": "273cf0853bbfb32a47f05c0427b44e853eaa0660388ee79ebfd2c70b294fbb52"
+    },
+    {
+      "key": "injection_single_roll_31415_0.004_4.88",
+      "scenario": "single_roll",
+      "seed": 31415,
+      "flux": 0.004,
+      "scale_arcsec": 4.88,
+      "recovered": 0.00406876004245553,
+      "nucleus": 0.003997113726221663,
+      "host_projection": 0.0012587538143939805,
+      "interval": [
+        0.0039321333059116935,
+        0.004208254376012688
+      ],
+      "covers": true,
+      "posterior_upper95": 0.0041853423865752595,
+      "bias": 6.876004245552972e-05,
+      "input_sha256": "273cf0853bbfb32a47f05c0427b44e853eaa0660388ee79ebfd2c70b294fbb52"
+    }
+  ],
+  "limitations": [
+    "fixed geometry; no real-template provenance",
+    "finite 9x9 host footprint",
+    "only three independent noise seeds; small-N descriptive intervals",
+    "zero equal-tail intervals cannot cover zero for a continuous positive prior",
+    "source-prior and omitted geometry uncertainty remain explicit",
+    "no agreed science bias threshold; no negligible-leakage claim"
+  ]
+}

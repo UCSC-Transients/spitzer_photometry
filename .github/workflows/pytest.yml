@@ -45,6 +45,8 @@ jobs:
         run: python scripts/generate_stage1_artifacts.py --output-dir test-results/stage1-validation
       - name: Stage 2 independent isolated-star recovery artifacts
         run: python scripts/validate_stage2.py --output-dir test-results/stage2-validation
+      - name: Stage 4 positive-GP leakage and uncertainty artifacts
+        run: python scripts/validate_stage4.py --quick --draws 4096 --output-dir test-results/stage4-validation
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
