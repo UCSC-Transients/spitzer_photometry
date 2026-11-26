@@ -67,10 +67,53 @@ def positive_comparison(records: dict, directory: Path) -> dict:
                 maximum_gaussian_covariance_scaled_error=maximum_gaussian_covariance_scaled_error, failures=failures)
 
 
+def record_gate(sample: dict, *, allow_base_guard: bool = False) -> dict:
+    """Check every process, including confirmations, before using numerical files.
+
+    The 1 GiB cap is hard, independent of relative performance confirmation.
+    Missing/empty/failed records cannot make an all() check pass vacuously.
+    Only the initial dense-reference budget refusal is an allowed noncompletion.
+    """
+    failures, rss_failures = [], []
+    for side in ('base', 'head'):
+        rows = sample.get(side, [])
+        if len(rows) < 3:
+            failures.append(dict(side=side, reason='at least three completed records required'))
+        for i, row in enumerate(rows):
+            guarded = (allow_base_guard and side == 'base' and row.get('status') == 'failed'
+                       and 'budget' in row.get('error', '').lower())
+            if row.get('status') != 'completed' and not guarded:
+                failures.append(dict(side=side, index=i, reason='process not completed', status=row.get('status')))
+            peak, cap = row.get('peak_memory_bytes'), row.get('rss_budget_bytes', 2**30)
+            valid = (isinstance(peak, (int, float)) and np.isfinite(peak) and peak > 0
+                     and isinstance(cap, (int, float)) and np.isfinite(cap) and cap > 0)
+            if not valid or peak > min(cap, 2**30) or row.get('rss_within_budget') is not True:
+                rss_failures.append(dict(side=side, index=i, peak_memory_bytes=peak,
+                                         reason='hard RSS cap exceeded or resource record unresolved'))
+    if len(sample.get('base', [])) != len(sample.get('head', [])):
+        failures.append(dict(reason='unpaired record counts'))
+    return dict(status='failed_rss_budget' if rss_failures else 'failed_completion' if failures else 'passed',
+                failures=failures, rss_failures=rss_failures)
+
+
 def assess(records: dict, directory: Path, confirmation: dict | None = None) -> dict:
     report = {}
     for mode in ('cold', 'warm'):
         sample = records[mode]
+        gates = dict(initial=record_gate(sample, allow_base_guard=True))
+        if confirmation is not None:
+            gates['confirmation'] = record_gate(confirmation.get(mode, {}))
+            for side in ('base', 'head'):
+                if len(confirmation.get(mode, {}).get(side, [])) != len(sample.get(side, [])):
+                    gate = gates['confirmation']
+                    gate['failures'].append(dict(side=side, reason='confirmation repeat count differs from initial'))
+                    if gate['status'] == 'passed':
+                        gate['status'] = 'failed_completion'
+        failed = [g['status'] for g in gates.values() if g['status'] != 'passed']
+        if failed:
+            report[mode] = dict(status='failed_rss_budget' if 'failed_rss_budget' in failed else failed[0],
+                                record_gates=gates)
+            continue
         complete = all(r['status'] == 'completed' for side in sample.values() for r in side)
         if complete:
             numerical = _numerical_check(sample, directory)
@@ -93,8 +136,7 @@ def assess(records: dict, directory: Path, confirmation: dict | None = None) -> 
                                 base=[{k:v for k,v in r.items() if k in ('status','error','wall_seconds','peak_memory_bytes')} for r in sample['base']],
                                 head=[{k:v for k,v in r.items() if k in ('status','error','wall_seconds','peak_memory_bytes','rss_within_budget','accepted','prior_host_accepted','legacy_dense_estimated_peak_bytes')} for r in sample['head']],
                                 note='No paired speed ratio when the reference cannot run; small-case equivalence remains required')
-        if any(not r['rss_within_budget'] for r in sample['head']):
-            report[mode]['status'] = 'failed_rss_budget'
+        report[mode]['record_gates'] = gates
     return report
 
 

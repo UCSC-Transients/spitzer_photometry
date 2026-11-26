@@ -52,8 +52,17 @@ Condition in observation space:
 
 The Schur factorization uses diagonal scaling for numerical conditioning and checks
 the original operator residual, with three residual checks and refinement. Failure
-above the declared relative tolerance (default `1e-10`) raises. Covariance exports
-use selected actions; there is no full host inverse or host covariance allocation.
+above the declared relative tolerance (default `1e-10`) raises. Selected covariance
+exports use the Joseph quadratic form, with selected unit columns E:
+
+    V = S^-1 B.T E,  R = E - A.T V
+    selected covariance = R.T K R + V.T N V.
+
+This avoids subtracting almost equal covariances at high information. The residual
+formation roundoff bound must resolve variance to `1e-8` relative precision or the
+export raises; there is no variance floor or extra noise. The general subtractive
+covariance-action interface also refuses unresolved cancellation. Selected export
+storage is O(p*k+n*k+k**2); no full large host inverse/covariance is constructed.
 
 An independent prior draw z and measurement-noise draw epsilon give an IID
 posterior Gaussian draw
@@ -90,8 +99,12 @@ the original exact operator remains in use. This is an acceleration policy, not 
 different scientific model.
 
 Independent background calibration is subtracted once and marginalized with
-`N_i = diag(sigma_i**2) + tau_i**2 11.T`. Sherman--Morrison retains the full
-rank-one covariance and its determinant. `nuisance_moments` exports joint selected
+`N_i = diag(sigma_i**2) + tau_i**2 11.T`. Weighted common/differential-mode separation
+retains the full rank-one covariance and its determinant without subtracting two
+large precision-weighted vectors. Every noise solve checks the original equations
+for each RHS at `1e-10`; unrepresentable multi-pixel limits raise with residuals.
+The scalar remains supported even when background variance dominates by `1e20`.
+`nuisance_moments` exports joint selected
 physical/background covariance, including expected conditional background variance
 and covariance of conditional means. Background offsets remain signed.
 
@@ -169,6 +182,13 @@ use identical pixels, seeds, priors, calibration, thread count and proposal budg
 on base/head. Suspected regressions get a confirming paired run. >10% relative
 MAD is inconclusive; the 25% plus 0.25 s time and 20% plus 20 MiB memory gates are
 unchanged. No speed ratio is computed when the dense reference rejects a case.
+All initial and confirmation records must complete and meet the hard 1 GiB RSS
+cap (the declared dense-base memory refusal is allowed only in initial records).
+Missing records, stale success flags and incomplete confirmations fail the CLI.
+Here **warm means a same-process rerun**, after a discarded run. Each run rebuilds
+instrument operators, the prior and fit, and clears/restores instrument caches;
+this does not measure retained operator or fitted-state caches. Earlier raw warm
+records have the same protocol and remain unchanged.
 
 The sweep varies native size, actual scene SR, BCD count, anchor count and host
 footprint. The large case retains 10 BCDs, 800 valid native pixels, a 128x128 host

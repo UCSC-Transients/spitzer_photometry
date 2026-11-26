@@ -57,11 +57,18 @@ class DenseNoise:
         return hashlib.sha256(self.covariance.tobytes()).hexdigest()
 
 
+class NoiseSolveFailure(RuntimeError):
+    """The full background-noise equations could not be resolved in float64."""
+    def __init__(self, diagnostics: dict):
+        super().__init__('Background noise solve residual exceeds 1e-10; precision unresolved')
+        self.diagnostics = diagnostics
+
+
 class BackgroundNoise:
     """Independent native variances plus one calibrated background per exposure.
 
-    N_i = diag(sigma_i**2) + tau_i**2 11.T. Sherman--Morrison and the
-    determinant lemma retain the entire rank-one term. Backgrounds may be signed.
+    N_i = diag(sigma_i**2) + tau_i**2 11.T. Weighted common-mode separation and
+    the determinant lemma retain the entire rank-one term. Backgrounds may be signed.
     Their external calibration has already been subtracted from the measurements.
     """
     def __init__(self, variances: tuple[np.ndarray, ...], background_sd: tuple[float, ...]):
@@ -79,6 +86,8 @@ class BackgroundNoise:
         self.logdet = float(sum(np.log(v).sum()+np.log1p(t*t*np.sum(1/v))
                                for v, t in zip(self.variances, self.tau)))
         self.storage_bytes = 8*(self.size+len(self.tau))
+        self.solve_count = 0
+        self.maximum_solve_residual = 0.
 
     def action(self, x: np.ndarray) -> np.ndarray:
         columns = np.asarray(x, dtype=float).reshape(self.size, -1)
@@ -88,11 +97,40 @@ class BackgroundNoise:
         return out.reshape(x.shape)
 
     def solve(self, x: np.ndarray) -> np.ndarray:
+        """Separate common and differential modes, checking every RHS afterwards.
+
+        Subtracting two precision-weighted vectors loses the common mode when
+        tau dominates native noise, even for a perfectly conditioned scalar.
+        Center before weighting instead. Very ill-conditioned multi-pixel cases
+        can still be unrepresentable; refuse them rather than report a false fit.
+        """
         columns = np.asarray(x, dtype=float).reshape(self.size, -1)
+        if not np.isfinite(columns).all():
+            raise ValueError('Finite noise RHS required')
         out = np.empty_like(columns)
         for sl, v, t in zip(self.slices, self.variances, self.tau):
-            z = columns[sl]/v[:, None]
-            out[sl] = z-(t*t/(1+t*t*np.sum(1/v)))*z.sum(axis=0)/v[:, None]
+            if t == 0:
+                out[sl] = columns[sl]/v[:, None]
+                continue
+            weights = v.min()/v
+            centered = columns[sl]-columns[sl.start]
+            average = np.sum(weights[:, None]*centered, axis=0)/weights.sum()
+            common = columns[sl.start]+average
+            out[sl] = ((centered-average)/v[:, None]
+                       + weights[:, None]*(common/(v.min()+t*t*weights.sum())))
+        residual = self.action(out)-columns
+        # Per-exposure, per-RHS checks prevent a large column or a bright exposure
+        # from hiding another's failure. Max norms avoid squaring/overflow.
+        per_block = np.array([np.max(np.abs(residual[sl]), axis=0)/np.maximum(
+            np.max(np.abs(columns[sl]), axis=0), np.finfo(float).tiny) for sl in self.slices])
+        relative = np.max(per_block, axis=0)
+        worst = float(np.max(relative))
+        self.solve_count += 1
+        self.maximum_solve_residual = max(self.maximum_solve_residual, worst)
+        if not np.isfinite(out).all() or not np.isfinite(worst) or worst > 1e-10:
+            raise NoiseSolveFailure(dict(relative_residual=worst, per_rhs=relative.tolist(),
+                                         per_exposure_rhs=per_block.tolist(),
+                                         tolerance=1e-10, solve_count=self.solve_count))
         return out.reshape(x.shape)
 
     def sample(self, rng: np.random.Generator, count: int) -> np.ndarray:

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Stage 1 worker protocol: paired dense/scalable posterior on identical pixels."""
+"""Stage 1 worker protocol: paired dense/scalable posterior on identical pixels.
+
+``warm`` is a same-process rerun after one discarded run. Both runs rebuild the
+instrument operators, prior and fit; synthetic_host_context clears/restores the
+instrument caches. Only process/import/allocator warming is retained, not fitted
+state or instrument/operator caches. Base and head use the same cache protocol.
+"""
 from __future__ import annotations
 
 import argparse
@@ -76,6 +82,7 @@ def main() -> None:
     record = dict(config=spec, input_sha256=input_digest, backend='scalable' if head else 'dense-reference',
                   head=subprocess.check_output(['git', '-C', str(args.repo), 'rev-parse', 'HEAD'], text=True).strip(),
                   mode=args.mode, threads=1, calibration='analytic synthetic; not real IRAC calibration',
+                  cache_protocol='same-process rerun; rebuilt instrument operators, prior and fit; instrument caches cleared/restored',
                   native_pixels=sum(int(f.image.valid.sum()) for f in frames), parameters=host_count+2,
                   position_iterations='unsupported; conditional geometry inherited from Stage 4')
     arrays = {}

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+from numbers import Integral
 import tempfile
 import time
 from typing import Iterator
@@ -159,6 +160,10 @@ class GridPrior:
         """Zero-mean untruncated prior draws as columns, limited to one batch."""
         if not 1 <= count <= self.budget.batch_size:
             raise ValueError('Draw count exceeds declared sampling batch')
+        cells = int(np.prod(self.embedding_shape))
+        self.budget.guard(self.storage_bytes+8*self.size*count
+                          +64*cells*(min(count, self.fft_batch_size)+1)
+                          +16*(self.size-self.host_size)*count, 'Prior sampling output and workspace')
         out = np.empty((self.size, count))
         for start in range(0, count, self.fft_batch_size):
             stop = min(count, start+self.fft_batch_size)
@@ -308,18 +313,54 @@ class GaussianPosterior:
         return solution
 
     def covariance_action(self, values: np.ndarray) -> np.ndarray:
-        """Marginalized covariance action; sources retain host and nuisance uncertainty."""
-        return self.prior.action(values)-self.cross@self.solve(self.cross.T@values)
+        """Covariance action, refusing unresolved subtractive precision.
+
+        Use selected_covariance for high-information components: its quadratic
+        form avoids this subtraction without forming a full host covariance.
+        """
+        prior = self.prior.action(values)
+        update = self.cross@self.solve(self.cross.T@values)
+        out = prior-update
+        error = 16*np.finfo(float).eps*(np.linalg.norm(prior, axis=0)+np.linalg.norm(update, axis=0))
+        if (not np.isfinite(out).all() or not np.isfinite(error).all()
+                or np.any(error > 1e-8*np.linalg.norm(out, axis=0))):
+            raise NumericalFailure('Covariance action precision unresolved', dict(roundoff_bound=np.asarray(error).tolist()))
+        return out
 
     def selected_covariance(self, indices: np.ndarray) -> np.ndarray:
-        """Selected physical-parameter covariance without a full dense inverse."""
+        """Selected covariance as R.T K R + V.T N V (Joseph form).
+
+        V = S^-1 A K E and R = E - A.T V for selected unit columns E.
+        The two positive quadratic forms avoid subtracting almost equal prior
+        and update covariances. A conservative roundoff check on forming R
+        refuses unresolved precision; no variance floor or extra noise is used.
+        Storage is O(p*k+n*k+k*k), never a full large host covariance.
+        """
         idx = _indices(indices, self.prior.size)
-        self.prior.budget.guard(self.memory['peak_bytes']+24*self.prior.size*len(idx), 'Selected covariance')
-        out = np.empty((len(idx), len(idx)))
-        for j in range(0, len(idx), self.prior.budget.batch_size):
-            chosen = idx[j:j+self.prior.budget.batch_size]
-            unit = np.zeros((self.prior.size, len(chosen))); unit[chosen, np.arange(len(chosen))] = 1
-            out[:, j:j+len(chosen)] = self.covariance_action(unit)[idx]
+        p, n, k = self.prior.size, len(self.data.y), len(idx)
+        self.prior.budget.guard(self.memory['peak_bytes']+64*p*k+48*n*k+24*k*k, 'Selected covariance')
+        unit = np.zeros((p, k)); unit[idx, np.arange(k)] = 1
+        gain = self.solve(self.cross[idx].T)
+        residual = unit-self.data.design.adjoint(gain)
+        kr = self.prior.action(residual)
+        noise = self.data.noise.action(gain)
+        prior_term, noise_term = residual.T@kr, gain.T@noise
+        out = prior_term+noise_term
+        # Nonnegative forward coefficients allow |A.T| |V| without materializing
+        # A. Bound error in R by a dot-product rounding allowance; propagate it
+        # through K using ||K|| <= trace(K), retaining even tiny variances.
+        allowance = 8*(n+1)*np.finfo(float).eps
+        r_error = allowance*np.linalg.norm(unit+self.data.design.adjoint(np.abs(gain)), axis=0)
+        trace = self.prior.host_size*self.prior.amplitude**2+(p-self.prior.host_size)*self.prior.source_sd**2
+        energy_error = np.sqrt(trace)*r_error
+        bound = 2*np.sqrt(np.maximum(np.diag(prior_term), 0))*energy_error+energy_error**2
+        bound += 8*(p+n+1)*np.finfo(float).eps*np.abs(np.diag(out))
+        relative = bound/np.maximum(np.diag(out), np.finfo(float).tiny)
+        if (not np.isfinite(out).all() or np.any(np.diag(out) <= 0)
+                or np.any(np.diag(prior_term) < 0) or np.any(relative > 1e-8)):
+            raise NumericalFailure('Selected covariance precision unresolved',
+                                   dict(relative_roundoff_bound=relative.tolist(), tolerance=1e-8,
+                                        selected_indices=idx.tolist()))
         return (out+out.T)/2
 
     def sample(self, rng: np.random.Generator, count: int) -> np.ndarray:
@@ -598,6 +639,8 @@ def fit_positive(data: OperatorData, prior: GridPrior, *, output_dir: Path, seed
                        sample_batch_size=prior.budget.batch_size, fft_batch_size=prior.fft_batch_size,
                        fft_work_target_bytes=prior.budget.fft_work_bytes, adjoint_error=gaussian.adjoint_error,
                        maximum_solve_residual=gaussian.maximum_solve_residual,
+                       maximum_noise_solve_residual=getattr(data.noise, 'maximum_solve_residual', None),
+                       noise_solve_count=getattr(data.noise, 'solve_count', None),
                        solve_residual_history=gaussian.residual_history,
                        operator_counts=dict(data.design.counts), prior_counts=dict(prior.counts),
                        assembly_operator_counts=gaussian.assembly_operator_counts,
@@ -670,12 +713,15 @@ def mixture_moments(posteriors: tuple[PositivePosterior, ...], weights: np.ndarr
             raise ValueError('Mixture host grids must match')
         positions, indices = [], []
         for j, component in enumerate(components):
-            if isinstance(component, int):
+            if isinstance(component, Integral) and not isinstance(component, (bool, np.bool_)):
                 if not 0 <= component < fit.gaussian.prior.host_size:
                     raise ValueError('Host component index out of range')
                 positions.append(j); indices.append(component)
-            elif component in fit.data.source_names:
-                positions.append(j); indices.append(fit.gaussian.prior.host_size+fit.data.source_names.index(component))
+            elif isinstance(component, str):
+                if component in fit.data.source_names:
+                    positions.append(j); indices.append(fit.gaussian.prior.host_size+fit.data.source_names.index(component))
+            else:
+                raise ValueError('Components must be integer host indices or string source names')
         m, c = np.zeros(len(components)), np.zeros((len(components), len(components)))
         if indices:
             selected_mean, selected_cov = fit.moments(np.array(indices))
