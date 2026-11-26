@@ -201,12 +201,90 @@ the small science comparison consumer. The existing performance job additionally
 runs paired small/native9 posterior cases using the same Stage 1 machinery. Full
 scaling and larger development experiments are local/manual evidence.
 
-## Measured run 20261126-05
+## Independent-review corrections RV27
+
+The bounded correction starts from reviewed head
+`0aec6a1506d55e64aee85132c94d8b530ede0b5d`, still against integrated base
+`05d6a77931c06851f4cc1e04cca255e7e75f764a`. Numerical correction commit:
+`bd81559148112a460a7bdbc2bc22b5266521c351`. The independent review record and probes
+are read-only inputs; new outputs live in `.test-artifacts/stage5-rv27/` in the
+author worktree. The dense reference, physics, priors, proposal/acceptance counts,
+CI workflow and Stage 1 benchmark implementation are unchanged.
+
+- **RV27-01:** background solves separate weighted common/differential modes,
+  including the zero-background diagonal limit. Per-exposure, per-RHS residuals
+  enforce the original `1e-10` solve precision. The review scalar returns mode
+  1.5 and predictive scores -1.1810780822461169 and -136.1577621784771, agreeing
+  with independent same-draw references within `3e-14`. Scalar and unequal-variance
+  common-mode solves remain accurate through a `1e20` background/native variance
+  ratio. Unresolved differential modes raise with diagnostics. Behavioral tests
+  cover 80-digit arithmetic, objective gradients, bounded mode, likelihood, ESS,
+  mismatch diagnostics and masking of small failures by bright exposures/RHS.
+- **RV27-02:** selected covariance uses the Joseph form above. Independent
+  information-form tests retain scalar variances through `1e-20` and correlated
+  variances through `1e-16`, with maximum scaled error below `1e-15` in the recorded
+  sweep. More extreme requests explicitly fail the roundoff test. The scalar
+  `1e-16` result is `1e-16`, not zero; no variance/noise floor is applied.
+- **RV27-03:** every initial and confirmation record is checked for completion,
+  paired repeat counts and the hard RSS cap before numerical comparisons. Both
+  sides are checked. Confirmation-only failure/missing-record/over-cap controls
+  fail, including an inflated cap or stale success flag. A subprocess regression
+  verifies CLI exit 1; valid and noisy confirmations retain their existing gates.
+- **RV27-04:** direct prior sampling guards retained output plus live FFT/source
+  workspaces before allocating or advancing the RNG. The 128 MiB output requested
+  under a 64 MiB cap is refused; allowed draws and FFT-chunk RNG identity pass.
+- **RV27-05:** Python and NumPy integral host indices preserve all mixture means
+  and within/between-model covariance terms. Invalid component types raise;
+  named sources absent from a model retain their intended zero contribution.
+- **RV27-06:** warm is explicitly labeled as a same-process rebuild, including
+  its cleared/restored instrument-cache state. Existing raw labels/data are kept.
+
+All six findings are addressed for independent re-review, with no disagreement or
+scientific-promotion claim. The correction's required CI tests include 37 additional
+behavioral cases. Local final validation passes 526 non-slow tests (five skips),
+six integration tests, six real-PRF algebra tests (one unavailable-input skip) and
+all 18 synthetic science comparisons. The latter's maximum selected-covariance
+error is `5.93e-14` in marginal-SD units. Development bias, mismatch and limited
+coverage conclusions remain unchanged.
+
+The numerical correction's first CI run passed Python 3.11/3.12, but the unchanged
+Stage 1 cold benchmark was inconclusive: base/head relative timing MAD 51.4%/37.5%
+against 10%. Numerical differences were zero and allocation gates passed. That
+job exited 4 and skipped the Stage 5 step; this is retained, not reported as a pass.
+See [the recorded CI failure](https://github.com/UCSC-Transients/spitzer_photometry/actions/runs/45755742007/job/139693813529)
+and the exact final-head checks on the PR.
+
+The correction reruns all nine scaling fixtures with five cold and warm pairs,
+one thread and identical base/head input hashes. BCD3, BCD10, SR2, native9,
+anchors3 and native12 pass both modes; anchors3's initial timing crossing did not
+repeat in confirmation, whose completion and hard-RSS checks also pass. Small
+cold/warm remain inconclusive under the unchanged dispersion gate, so the overall
+local command exits 1. SR4 and large complete on the head with the expected dense
+base refusal. All comparable numerical, positive-moment and evidence gates pass.
+
+The large corrected case's cold/warm medians are **33.960/33.312 s**, with maximum
+RSS **416.6 MiB** under 1 GiB. All ten head runs accept 624 posterior and 786 prior
+draws. There is no large dense-run speedup ratio. Relative to the previous Stage 5
+synthetic record, Gaussian mean, evidence and native prediction are unchanged;
+selected covariance changes by at most `8.20e-12` in marginal-SD units. This last
+comparison is explicitly to the previous scalable record, not an independent
+large dense oracle. No earlier failure or inconclusive measurement is removed.
+
+Correction evidence: [metrics, source hashes and all paired records](stage5_evidence/rv27-corrections.json),
+[high-dynamic-range arrays](stage5_evidence/rv27-dynamic-range.npz),
+[large-case arrays](stage5_evidence/rv27-large-synthetic-arrays.npz) and
+[scaling plot](stage5_evidence/rv27-scaling.svg). Full configurations, seeds, raw
+draws, logs, failures and manifests remain in `.test-artifacts/stage5-rv27/`.
+The original evidence below is retained as history rather than overwritten.
+
+![Correction sweep: synthetic, single-thread, warm means same-process rebuild](stage5_evidence/rv27-scaling.svg)
+
+## Initial reviewed run 20261126-05
 
 The numerical implementation and scaling worker were fixed at
 `9a3645acaad80e367f654a977d1224f085164673` for the final five-pair sweep against
-`05d6a77931c06851f4cc1e04cca255e7e75f764a`. Subsequent commits add the distinct-model
-mixture regression and this evidence; numerical-source checksums are in
+`05d6a77931c06851f4cc1e04cca255e7e75f764a`. Commits through reviewed head `0aec6a1`
+add the distinct-model mixture regression and this evidence; original numerical-source checksums are in
 [metrics.json](stage5_evidence/metrics.json). Required Python 3.11, Python 3.12 and
 paired performance CI passed on the numerical commit. Review the PR checks for
 the exact final head.
