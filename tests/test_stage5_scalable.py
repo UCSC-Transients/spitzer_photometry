@@ -232,6 +232,48 @@ def test_background_rank_one_terms_and_nuisance_marginalization(tmp_path):
     assert abs(result['covariance'][1, 2]) > 1e-3
 
 
+def test_distinct_structural_models_preserve_between_model_and_absent_source_uncertainty(tmp_path):
+    from src.gp_identifiability import (model_weights as dense_weights,
+                                       mixture_moments as dense_moments,
+                                       mixture_conditional_likelihood as dense_conditional)
+    full, _ = algebra_fixture((1, 2), sources=1, n=5)
+    reduced = replace(full, design=full.design[:, :2], source_names=())
+    fits, oracles, future, dense_future = [], [], [], []
+    for d in (full, reduced):
+        data = from_dense(d)
+        prior = prior_for(data, (1, 2), budget=Budget(batch_size=128))
+        fit = fit_positive(data, prior, output_dir=tmp_path, seed=1729, draws=8192)
+        oracle = fit_static(d, scale_arcsec=1.7, amplitude=.3, host_mean=np.full(2, .8),
+                            source_prior_sigma=1., seed=2718, draws=8192)
+        assert abs(fit.log_evidence-oracle.log_evidence) < .1
+        # Isolate component alignment and likelihood integration from Monte Carlo
+        # differences by supplying identical positive samples to the dense oracle.
+        samples = np.column_stack(tuple(fit.batches())).T
+        indices = np.arange(prior.size)
+        mean, covariance = fit.moments(indices)
+        oracles.append(replace(oracle, samples=samples, mean=mean, covariance=covariance,
+                               log_evidence=fit.log_evidence, diagnostics=fit.diagnostics))
+        fits.append(fit)
+        new = replace(d, exposure_ids=('new',), partition='science', y=d.y+.02)
+        dense_future.append(new); future.append(from_dense(new))
+    fits, oracles = tuple(fits), tuple(oracles)
+    prior_mass = np.array([.3, .7])
+    actual_weights, expected_weights = model_weights(fits, prior_mass), dense_weights(oracles, prior_mass)
+    for key in ('weights', 'orthant_mc_weight_bounds'):
+        np.testing.assert_allclose(actual_weights[key], expected_weights[key], atol=1e-14)
+    weights = np.array([.4, .6])
+    actual = mixture_moments(fits, weights, (0, 1, 'star_0'))
+    expected = dense_moments(oracles, weights)
+    for key in ('mean', 'covariance', 'within_covariance', 'between_covariance'):
+        np.testing.assert_allclose(actual[key], expected[key], atol=1e-14)
+    assert actual['between_covariance'][2, 2] > .001
+    assert actual['covariance'][2, 2] > actual['within_covariance'][2, 2]
+    column = np.full(5, .1)
+    actual_score = mixture_conditional_likelihood(fits, tuple(future), weights, column, .2)
+    expected_score = dense_conditional(oracles, tuple(dense_future), weights, column, .2)
+    assert actual_score['log_likelihood'] == pytest.approx(expected_score['log_likelihood'], abs=1e-12)
+
+
 @pytest.mark.parametrize('order', [False, True])
 @pytest.mark.parametrize('anchors', [1, 2])
 @pytest.mark.parametrize('sr', [1, 2, 4])
