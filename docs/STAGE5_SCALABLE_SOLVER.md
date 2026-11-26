@@ -51,7 +51,7 @@ Condition in observation space:
     posterior covariance action(v) = K v - B S^-1 B.T v.
 
 The Schur factorization uses diagonal scaling for numerical conditioning and checks
-the original operator residual, with at most two refinement corrections. Failure
+the original operator residual, with three residual checks and refinement. Failure
 above the declared relative tolerance (default `1e-10`) raises. Covariance exports
 use selected actions; there is no full host inverse or host covariance allocation.
 
@@ -180,6 +180,69 @@ The existing required Python 3.11/3.12 jobs discover all numerical tests and run
 the small science comparison consumer. The existing performance job additionally
 runs paired small/native9 posterior cases using the same Stage 1 machinery. Full
 scaling and larger development experiments are local/manual evidence.
+
+## Measured run 20261126-05
+
+The numerical implementation and scaling worker were fixed at
+`9a3645acaad80e367f654a977d1224f085164673` for the final five-pair sweep against
+`05d6a77931c06851f4cc1e04cca255e7e75f764a`. Subsequent commits add the distinct-model
+mixture regression and this evidence; numerical-source checksums are in
+[metrics.json](stage5_evidence/metrics.json). Required Python 3.11, Python 3.12 and
+paired performance CI passed on the numerical commit. Review the PR checks for
+the exact final head.
+
+![Single-thread synthetic scaling medians](stage5_evidence/scaling.svg)
+
+The large case has 16,386 parameters and 800 valid native pixels. Cold/warm median
+runtimes are 34.750/34.118 seconds, median RSS 391.0/393.0 MiB, maximum RSS 413.5 MiB,
+and estimated live numerical storage 277.2 MiB. All ten runs accept 624 posterior
+and 786 prior-host draws from 8,192 proposals, above the unchanged 512 gate. The
+largest retained matrix is 16,386 by 800; the observation factor is 800 by 800 and
+FFT workspace is two 256 by 256 fields. Adjoint error is `8.65e-18`; maximum solve
+residual is `6.19e-13`. The dense reference refuses before allocation; its legacy
+dense estimate is 10.78 GB. This is a completed memory-guarded case, not a measured
+speedup over a completed dense fit.
+
+The final sweep has no confirmed time/RSS regressions. Small/warm, BCD10/warm and
+native9/cold+warm remain **inconclusive** under the existing 10% relative-MAD gate;
+the overall local benchmark command therefore exits 1. All comparable numerical,
+positive-moment and evidence checks pass. SR=4 and the large case complete only on
+the scalable side and carry explicit baseline-guard status. Small cases are
+slower: native12 cold is 0.133 to 0.327 seconds and warm 0.119 to 0.316 seconds.
+Passing an absolute engineering budget does not imply acceleration. The earlier
+SR=2 memory regression, SR=4 embedding refusal and inconclusive measurements are
+retained in the public metrics as well as the full local records.
+
+Final fast regression: 489 passed, 5 skipped; separately selected real-calibration
+checks: 6 passed, 1 skipped (unavailable real-data input). Targeted N=1/2/10 and
+native-forward/solver integration: 6 passed. Those legacy integration cases emit
+three warnings about the old smoothed diagonal prior; they are not evidence for
+the new Matérn path. The final 18 synthetic science cases all pass equivalence:
+maximum Gaussian mean difference `1.96e-15` Jy, covariance error `9.61e-12` in
+marginal-SD product units, positive-mean discrepancy 2.98 combined Monte Carlo SE.
+Bias ranges from -0.0535 to +0.3349 mJy, with 9/18 inherited model-mismatch flags.
+All 12 positive-flux intervals include their truths, but these span only three
+independent development noise seeds and do not establish acceptance coverage.
+Zero-flux upper limits are recorded separately; inclusion is not detection coverage.
+
+The optional bounded-mode profile converges in 16 iterations with projected
+gradient `3.03e-8`; the one-iteration control fails explicitly. A standalone export
+profile records GP precision (10 PCG iterations), selected Gaussian covariance,
+positive prediction and joint nuisance covariance, including operation counts and
+tracked allocations. These phase timings are diagnostics, not paired speed claims.
+Fit diagnostics stop counting at completion of posterior sampling; export counts
+are recorded separately. Position iterations remain unsupported conditional
+geometry. The generic dense-noise adapter cannot export background nuisance
+moments without an explicit decomposition; that guarded profiling failure is kept.
+
+Public synthetic-only evidence includes [metrics](stage5_evidence/metrics.json),
+[large-case numerical arrays](stage5_evidence/large-synthetic-arrays.npz),
+[scaling plot](stage5_evidence/scaling.svg) and [checksums](stage5_evidence/checksums.json).
+The NPZ contains Gaussian mean, native prediction, selected covariance and evidence;
+it is not a real-data product. Reproduce the sweep with `scripts/run_stage5_benchmarks.py`
+using separate base/head checkouts, five repeats, 1,024 ordinary proposals and the
+declared 8,192 large-case proposals. Reproduce the science comparison with
+`scripts/validate_stage5.py --draws 8192` and an unused output directory.
 
 ## Artifacts and promotion
 
