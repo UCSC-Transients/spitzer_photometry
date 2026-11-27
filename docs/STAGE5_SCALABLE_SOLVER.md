@@ -60,8 +60,11 @@ exports use the Joseph quadratic form, with selected unit columns E:
 
 This avoids subtracting almost equal covariances at high information. The residual
 formation roundoff bound must resolve variance to `1e-8` relative precision or the
-export raises; there is no variance floor or extra noise. The general subtractive
-covariance-action interface also refuses unresolved cancellation. Selected export
+export raises; there is no variance floor or extra noise. This is a partial
+roundoff check, not a bound on total covariance error: gain-solve and kernel/FFT
+errors can exceed it in extreme near-null cases (deferred P3 RV27-02 below).
+The general subtractive covariance-action interface also refuses unresolved
+cancellation. Selected export
 storage is O(p*k+n*k+k**2); no full large host inverse/covariance is constructed.
 
 An independent prior draw z and measurement-noise draw epsilon give an IID
@@ -201,7 +204,43 @@ the small science comparison consumer. The existing performance job additionally
 runs paired small/native9 posterior cases using the same Stage 1 machinery. Full
 scaling and larger development experiments are local/manual evidence.
 
-## Independent-review corrections RV27
+## Re-review disposition and bounded acceptance follow-up
+
+Independent re-review of `853ea296f3660eeeded8ece9ef6585157873e73c` resolves
+RV27-01 and RV27-03 through RV27-06. RV27-02's original zero-variance blocker is
+resolved. Its remaining precision-bound limitation is an explicitly deferred,
+nonblocking **P3**; another broad correction cycle is not requested.
+
+The saved 90-digit Decimal probes return marginal-SD-product-scaled covariance
+errors of `1.2214031646228625e-7` for near-collinear observation columns and
+`9.52867542459389e-7` for a very broad kernel. Positive, nonzero variance is
+preserved, but the current guard does not fully propagate gain-solve or kernel/FFT
+error. The earlier scalar/correlated tests and the new probes examine different
+conditioning regimes, so their results do not disagree. The earlier tests do not
+establish the stronger accuracy bound. The [saved probe results and source hashes](stage5_evidence/rv27-p3-deferred.json)
+retain this evidence without changing the numerical implementation.
+
+The P3 follow-up must incorporate both saved behavioral probes, retain their
+physical difficulty, and require covariance error <=`1e-8` against an independent
+high-precision oracle or explicit `NumericalFailure`. It must rerun affected science
+tests and paired benchmarks. No jitter, variance/noise floor, or threshold relaxation
+is authorized. This documentation does not claim that follow-up is implemented.
+
+Required performance acceptance remains open. The [predeclared acceptance run](STAGE5_ACCEPTANCE_20261127.md)
+specifies one execution of the existing required CI benchmark job, preserving all
+earlier failed/inconclusive results and gates. Local preflight found substantial
+unrelated workstation load; no local acceptance measurements were started.
+The PR body and the run's immutable artifacts record the result after execution.
+Persistent dispersion is unresolved and will not trigger reruns until green.
+
+Stage 6 implementation requires accepted, reviewed Stage 5 integration. At this
+handoff PR #27 is open against `main` at
+`05d6a77931c06851f4cc1e04cca255e7e75f764a`; that SHA contains Stage 4, not Stage 5.
+It is not a valid Stage 6 dependency. Stage 6 remains read-only preparation until
+the approved integrated `BASE_REF` and `PR_BASE` are verified. Bias/coverage
+tolerances, held-out real BCDs and absolute calibration also remain unapproved.
+
+## Independent-review corrections RV27 (historical author report)
 
 The bounded correction starts from reviewed head
 `0aec6a1506d55e64aee85132c94d8b530ede0b5d`, still against integrated base

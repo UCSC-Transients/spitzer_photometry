@@ -1,0 +1,1068 @@
+{
+  "reviewed_head": "853ea296f3660eeeded8ece9ef6585157873e73c",
+  "status": "deferred_nonblocking_P3",
+  "reviewer_source_directory": "/Users/rfoley/spitzer_photometry/.worktrees/review-27-853ea296f3660eeeded8ece9ef6585157873e73c-20261126-02/.review",
+  "source_sha256": {
+    "adversarial.py": "57b002ae1a4d740a5fbcfc8c36653b86141300dcf9d803d264b289d4fd6e12c9",
+    "broad_kernel.py": "1473b03ac92b0a90f3fdde445c800d1120a91870d4b93dddd8c01687facb2127",
+    "artifacts/adversarial.json": "8d8fdd92e681416fcde3ae96031295e2977b770f1fe466ade70bf5b20fe9484c",
+    "artifacts/broad-kernel.json": "ba35eb8597e399da62ea69639292b638b08ccb8ba13e4933330d9ead8f7b9e8d",
+    "artifacts/finding-dispositions.json": "76504281e478440003ee1252d1a51bef81c0f3dd6a857b36221aef0e7fa9076d",
+    "artifacts/review-record.json": "2a662bedc49009af22195ea511facac216fe0699593a01d7f317a0ea77c4f3b8"
+  },
+  "finding": {
+    "id": "RV27-02",
+    "severity": "P3",
+    "blocking": false,
+    "title": "Selected-covariance guard does not bound total numerical error in extreme near-null cases",
+    "file": "src/scalable_gp.py",
+    "line": 343,
+    "end_line": 360,
+    "trigger": "A=[[1,1],[1,1.0001]], N=1e-16 I, two host cells one arcsec apart, finite Matern scale 1.7 arcsec and amplitude 1. Selected covariance returns rather than raising.",
+    "evidence": "Independent 90-digit Decimal information-form oracle: marginal-SD-product-scaled error 1.2214031646228625e-7; accepted observation solve residual 7.711660704942526e-12. An extreme scale=1e5 arcsec case reaches 9.52867542459389e-7.",
+    "consequence": "The 1e-8 precision gate cannot be interpreted as a bound on total covariance accuracy. Returned variances remain positive and nonzero; these tiny errors do not reproduce the original catastrophic failure or justify blocking experimental progression.",
+    "cause": "The bound covers residual formation and accumulation but does not fully propagate gain-solve and kernel/FFT errors.",
+    "required_followup": "Track as a minor numerical follow-up. Strengthen the bound or explicitly refuse the unresolved near-null regimes. Add the two saved behavioral cases; require covariance error <=1e-8 versus an independent high-precision oracle or explicit NumericalFailure. Do not introduce floors, jitter, changed noise, or weakened existing gates.",
+    "artifacts": [
+      "adversarial.json",
+      "broad-kernel.json"
+    ],
+    "performance_finding": false
+  },
+  "near_collinear": {
+    "near_collinear": [
+      {
+        "delta": 0.01,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.1740401350316728e-16,
+        "covariance": [
+          [
+            0.12766818407988847,
+            -0.12700663914691124
+          ],
+          [
+            -0.12700663914691124,
+            0.12639801944948864
+          ]
+        ],
+        "oracle": [
+          [
+            0.12766818407988845,
+            -0.12700663914691124
+          ],
+          [
+            -0.12700663914691124,
+            0.12639801944948864
+          ]
+        ],
+        "maximum_solve_residual": 3.264611285459616e-14
+      },
+      {
+        "delta": 0.01,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 1.3572617964696844e-16,
+        "covariance": [
+          [
+            0.0002017109755559295,
+            -0.0002007024669326098
+          ],
+          [
+            -0.0002007024669326098,
+            0.00019970395087108036
+          ]
+        ],
+        "oracle": [
+          [
+            0.00020171097555592946,
+            -0.00020070246693260977
+          ],
+          [
+            -0.00020070246693260977,
+            0.00019970395087108033
+          ]
+        ],
+        "maximum_solve_residual": 1.3613718956740022e-13
+      },
+      {
+        "delta": 0.01,
+        "variance": 1e-12,
+        "status": "returned",
+        "scaled_error": 5.7902651462431645e-15,
+        "covariance": [
+          [
+            2.020099700532319e-08,
+            -2.0099997020259066e-08
+          ],
+          [
+            -2.0099997020259066e-08,
+            1.999999703512045e-08
+          ]
+        ],
+        "oracle": [
+          [
+            2.0200997005323082e-08,
+            -2.0099997020258954e-08
+          ],
+          [
+            -2.0099997020258954e-08,
+            1.9999997035120335e-08
+          ]
+        ],
+        "maximum_solve_residual": 3.4506068025366336e-13
+      },
+      {
+        "delta": 0.01,
+        "variance": 1e-16,
+        "status": "returned",
+        "scaled_error": 2.197481229874992e-11,
+        "covariance": [
+          [
+            2.0201000000128975e-12,
+            -2.010000000013594e-12
+          ],
+          [
+            -2.010000000013594e-12,
+            2.000000000014297e-12
+          ]
+        ],
+        "oracle": [
+          [
+            2.0200999999700497e-12,
+            -2.009999999970199e-12
+          ],
+          [
+            -2.009999999970199e-12,
+            1.9999999999703475e-12
+          ]
+        ],
+        "maximum_solve_residual": 1.9935248703494307e-13
+      },
+      {
+        "delta": 0.001,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.0482471503641205e-16,
+        "covariance": [
+          [
+            0.13557668265903813,
+            -0.13548393135145542
+          ],
+          [
+            -0.13548393135145542,
+            0.13544118820094148
+          ]
+        ],
+        "oracle": [
+          [
+            0.13557668265903816,
+            -0.13548393135145545
+          ],
+          [
+            -0.13548393135145545,
+            0.13544118820094148
+          ]
+        ],
+        "maximum_solve_residual": 1.1096683291719361e-15
+      },
+      {
+        "delta": 0.001,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 1.9907325298809218e-16,
+        "covariance": [
+          [
+            0.01744542816005403,
+            -0.017436705129083567
+          ],
+          [
+            -0.017436705129083567,
+            0.017427991454789484
+          ]
+        ],
+        "oracle": [
+          [
+            0.01744542816005403,
+            -0.017436705129083564
+          ],
+          [
+            -0.017436705129083564,
+            0.01742799145478948
+          ]
+        ],
+        "maximum_solve_residual": 8.122756606607572e-13
+      },
+      {
+        "delta": 0.001,
+        "variance": 1e-12,
+        "status": "returned",
+        "scaled_error": 6.861068126340145e-13,
+        "covariance": [
+          [
+            2.001971455072606e-06,
+            -2.0009704698413764e-06
+          ],
+          [
+            -2.0009704698413764e-06,
+            1.9999704846027643e-06
+          ]
+        ],
+        "oracle": [
+          [
+            2.0019714550712333e-06,
+            -2.000970469840004e-06
+          ],
+          [
+            -2.000970469840004e-06,
+            1.999970484601392e-06
+          ]
+        ],
+        "maximum_solve_residual": 1.2924077816068794e-12
+      },
+      {
+        "delta": 0.001,
+        "variance": 1e-16,
+        "status": "returned",
+        "scaled_error": 2.145290003863083e-08,
+        "covariance": [
+          [
+            2.0020010399946316e-10,
+            -2.0010000399556033e-10
+          ],
+          [
+            -2.0010000399556033e-10,
+            2.0000000399166123e-10
+          ]
+        ],
+        "oracle": [
+          [
+            2.0020009970459043e-10,
+            -2.000999997047381e-10
+          ],
+          [
+            -2.000999997047381e-10,
+            1.999999997048857e-10
+          ]
+        ],
+        "maximum_solve_residual": 1.6082223689058726e-12
+      },
+      {
+        "delta": 0.0001,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.04697629940742e-16,
+        "covariance": [
+          [
+            0.13560660679854128,
+            -0.13557482897213094
+          ],
+          [
+            -0.13557482897213094,
+            0.1355930482617893
+          ]
+        ],
+        "oracle": [
+          [
+            0.1356066067985413,
+            -0.13557482897213094
+          ],
+          [
+            -0.13557482897213094,
+            0.13559304826178928
+          ]
+        ],
+        "maximum_solve_residual": 2.2203350352738298e-16
+      },
+      {
+        "delta": 0.0001,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 2.1859289908452215e-16,
+        "covariance": [
+          [
+            0.12698651890428322,
+            -0.12698016723727182
+          ],
+          [
+            -0.12698016723727182,
+            0.12697382088746081
+          ]
+        ],
+        "oracle": [
+          [
+            0.12698651890428322,
+            -0.1269801672372718
+          ],
+          [
+            -0.1269801672372718,
+            0.1269738208874608
+          ]
+        ],
+        "maximum_solve_residual": 1.4567013091792416e-12
+      },
+      {
+        "delta": 0.0001,
+        "variance": 1e-12,
+        "status": "returned",
+        "scaled_error": 1.5831900079997898e-10,
+        "covariance": [
+          [
+            0.00019972538056013957,
+            -0.00019971539429079294
+          ],
+          [
+            -0.00019971539429079294,
+            0.00019970540902070974
+          ]
+        ],
+        "oracle": [
+          [
+            0.00019972538052851925,
+            -0.00019971539425917454
+          ],
+          [
+            -0.00019971539425917454,
+            0.00019970540898909332
+          ]
+        ],
+        "maximum_solve_residual": 1.2327474490949989e-11
+      },
+      {
+        "delta": 0.0001,
+        "variance": 1e-16,
+        "status": "returned",
+        "scaled_error": 1.2214031646228625e-07,
+        "covariance": [
+          [
+            2.000199959250436e-08,
+            -2.0000999492517635e-08
+          ],
+          [
+            -2.0000999492517635e-08,
+            1.999999949253092e-08
+          ]
+        ],
+        "oracle": [
+          [
+            2.0001997149454098e-08,
+            -2.000099704960162e-08
+          ],
+          [
+            -2.000099704960162e-08,
+            1.9999997049749136e-08
+          ]
+        ],
+        "maximum_solve_residual": 7.711660704942526e-12
+      },
+      {
+        "delta": 1e-05,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.046870451560759e-16,
+        "covariance": [
+          [
+            0.13560141591770006,
+            -0.1355757384711258
+          ],
+          [
+            -0.1355757384711258,
+            0.13560006005492442
+          ]
+        ],
+        "oracle": [
+          [
+            0.13560141591770006,
+            -0.13557573847112578
+          ],
+          [
+            -0.13557573847112578,
+            0.1356000600549244
+          ]
+        ],
+        "maximum_solve_residual": 1.570080683185724e-16
+      },
+      {
+        "delta": 1e-05,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 2.0484467728886055e-16,
+        "covariance": [
+          [
+            0.13549706802305697,
+            -0.13549638803943032
+          ],
+          [
+            -0.13549638803943032,
+            0.13549571305916605
+          ]
+        ],
+        "oracle": [
+          [
+            0.13549706802305697,
+            -0.1354963880394303
+          ],
+          [
+            -0.1354963880394303,
+            0.13549571305916602
+          ]
+        ],
+        "maximum_solve_residual": 1.184267932617511e-13
+      },
+      {
+        "delta": 1e-05,
+        "variance": 1e-12,
+        "status": "explicit_refusal",
+        "error": "Selected covariance precision unresolved"
+      },
+      {
+        "delta": 1e-05,
+        "variance": 1e-16,
+        "status": "explicit_refusal",
+        "error": "Selected covariance precision unresolved"
+      },
+      {
+        "delta": 1e-06,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.046861103418848e-16,
+        "covariance": [
+          [
+            0.13560081493511542,
+            -0.13557574751596707
+          ],
+          [
+            -0.13557574751596707,
+            0.13560067934882883
+          ]
+        ],
+        "oracle": [
+          [
+            0.13560081493511544,
+            -0.1355757475159671
+          ],
+          [
+            -0.1355757475159671,
+            0.1356006793488288
+          ]
+        ],
+        "maximum_solve_residual": 1.6990589063368948e-16
+      },
+      {
+        "delta": 1e-06,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 0.0,
+        "covariance": [
+          [
+            0.13558739726261176,
+            -0.13558732696893205
+          ],
+          [
+            -0.13558732696893205,
+            0.13558726167528373
+          ]
+        ],
+        "oracle": [
+          [
+            0.13558739726261176,
+            -0.13558732696893205
+          ],
+          [
+            -0.13558732696893205,
+            0.13558726167528373
+          ]
+        ],
+        "maximum_solve_residual": 7.499139687924698e-15
+      },
+      {
+        "delta": 1e-06,
+        "variance": 1e-12,
+        "status": "returned",
+        "scaled_error": 1.3247722187134148e-09,
+        "covariance": [
+          [
+            0.12697983318103173,
+            -0.1269797696908786
+          ],
+          [
+            -0.1269797696908786,
+            0.12697970620125718
+          ]
+        ],
+        "oracle": [
+          [
+            0.12697983301281238,
+            -0.12697976952266174
+          ],
+          [
+            -0.12697976952266174,
+            0.12697970603304284
+          ]
+        ],
+        "maximum_solve_residual": 3.949039384681367e-11
+      },
+      {
+        "delta": 1e-06,
+        "variance": 1e-16,
+        "status": "explicit_refusal",
+        "error": "Gaussian solve residual exceeds declared tolerance"
+      },
+      {
+        "delta": 1e-07,
+        "variance": 0.0001,
+        "status": "returned",
+        "scaled_error": 2.046860180971085e-16,
+        "covariance": [
+          [
+            0.1356007540179058,
+            -0.1355757476013536
+          ],
+          [
+            -0.1355757476013536,
+            0.13560074045927717
+          ]
+        ],
+        "oracle": [
+          [
+            0.13560075401790583,
+            -0.13557574760135357
+          ],
+          [
+            -0.13557574760135357,
+            0.13560074045927714
+          ]
+        ],
+        "maximum_solve_residual": 1.5700923409279842e-16
+      },
+      {
+        "delta": 1e-07,
+        "variance": 1e-08,
+        "status": "returned",
+        "scaled_error": 0.0,
+        "covariance": [
+          [
+            0.13558824625821833,
+            -0.13558823697880637
+          ],
+          [
+            -0.13558823697880637,
+            0.13558823269939452
+          ]
+        ],
+        "oracle": [
+          [
+            0.13558824625821833,
+            -0.13558823697880637
+          ],
+          [
+            -0.13558823697880637,
+            0.13558823269939452
+          ]
+        ],
+        "maximum_solve_residual": 2.135556536949262e-15
+      },
+      {
+        "delta": 1e-07,
+        "variance": 1e-12,
+        "status": "returned",
+        "scaled_error": 7.504652543377895e-12,
+        "covariance": [
+          [
+            0.13549639561186808,
+            -0.13549638883679851
+          ],
+          [
+            -0.13549638883679851,
+            0.1354963820622293
+          ]
+        ],
+        "oracle": [
+          [
+            0.13549639561085133,
+            -0.13549638883578172
+          ],
+          [
+            -0.13549638883578172,
+            0.13549638206121245
+          ]
+        ],
+        "maximum_solve_residual": 3.785260365898886e-12
+      },
+      {
+        "delta": 1e-07,
+        "variance": 1e-16,
+        "status": "explicit_refusal",
+        "error": "Gaussian solve residual exceeds declared tolerance"
+      }
+    ],
+    "maximum_returned_error": 1.2214031646228625e-07,
+    "returned": 20,
+    "refused": 4,
+    "normwise_limit": {
+      "rhs": [
+        1e+100,
+        1.0
+      ],
+      "actual": [
+        1e+100,
+        0.0
+      ],
+      "normwise_residual": 1e-100,
+      "note": "Within-RHS dynamic range 1e100; below declared normwise relative precision. Not classified as a new blocking defect."
+    }
+  },
+  "broad_kernel": [
+    {
+      "scale": 10.0,
+      "variance": 1e-08,
+      "status": "returned",
+      "scaled_error": 5.058092668743656e-15,
+      "covariance": [
+        [
+          0.006687720055146793,
+          -0.006687715055146806
+        ],
+        [
+          -0.006687715055146806,
+          0.006687720055146793
+        ]
+      ],
+      "oracle": [
+        [
+          0.006687720055146759,
+          -0.006687715055146772
+        ],
+        [
+          -0.006687715055146772,
+          0.006687720055146759
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 10.0,
+      "variance": 1e-12,
+      "status": "returned",
+      "scaled_error": 5.058094559368822e-15,
+      "covariance": [
+        [
+          0.006687717555396799,
+          -0.0066877175548968
+        ],
+        [
+          -0.0066877175548968,
+          0.006687717555396799
+        ]
+      ],
+      "oracle": [
+        [
+          0.006687717555396765,
+          -0.006687717554896766
+        ],
+        [
+          -0.006687717554896766,
+          0.006687717555396765
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 10.0,
+      "variance": 1e-16,
+      "status": "returned",
+      "scaled_error": 5.0580945595578846e-15,
+      "covariance": [
+        [
+          0.0066877175551468245,
+          -0.006687717555146774
+        ],
+        [
+          -0.006687717555146774,
+          0.0066877175551468245
+        ]
+      ],
+      "oracle": [
+        [
+          0.006687717555146791,
+          -0.00668771755514674
+        ],
+        [
+          -0.00668771755514674,
+          0.006687717555146791
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100.0,
+      "variance": 1e-08,
+      "status": "returned",
+      "scaled_error": 1.2746038400582112e-12,
+      "covariance": [
+        [
+          7.414207370882504e-05,
+          -7.413707370883753e-05
+        ],
+        [
+          -7.413707370883753e-05,
+          7.414207370882504e-05
+        ]
+      ],
+      "oracle": [
+        [
+          7.414207370891954e-05,
+          -7.413707370893204e-05
+        ],
+        [
+          -7.413707370893204e-05,
+          7.414207370891954e-05
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100.0,
+      "variance": 1e-12,
+      "status": "returned",
+      "scaled_error": 1.2746468156348308e-12,
+      "covariance": [
+        [
+          7.413957395883128e-05,
+          -7.413957345883129e-05
+        ],
+        [
+          -7.413957345883129e-05,
+          7.413957395883128e-05
+        ]
+      ],
+      "oracle": [
+        [
+          7.413957395892579e-05,
+          -7.413957345892579e-05
+        ],
+        [
+          -7.413957345892579e-05,
+          7.413957395892579e-05
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100.0,
+      "variance": 1e-16,
+      "status": "returned",
+      "scaled_error": 1.2746468199325333e-12,
+      "covariance": [
+        [
+          7.413957370885629e-05,
+          -7.413957370880628e-05
+        ],
+        [
+          -7.413957370880628e-05,
+          7.413957370885629e-05
+        ]
+      ],
+      "oracle": [
+        [
+          7.413957370895078e-05,
+          -7.413957370890078e-05
+        ],
+        [
+          -7.413957370890078e-05,
+          7.413957370895078e-05
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 1000.0,
+      "variance": 1e-08,
+      "status": "returned",
+      "scaled_error": 1.5586729823668097e-11,
+      "covariance": [
+        [
+          7.516345368419672e-07,
+          -7.466345368544671e-07
+        ],
+        [
+          -7.466345368544671e-07,
+          7.516345368419672e-07
+        ]
+      ],
+      "oracle": [
+        [
+          7.516345368302517e-07,
+          -7.466345368427516e-07
+        ],
+        [
+          -7.466345368427516e-07,
+          7.516345368302517e-07
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 1000.0,
+      "variance": 1e-12,
+      "status": "returned",
+      "scaled_error": 1.5638740394347688e-11,
+      "covariance": [
+        [
+          7.491347868482171e-07,
+          -7.491342868482172e-07
+        ],
+        [
+          -7.491342868482172e-07,
+          7.491347868482171e-07
+        ]
+      ],
+      "oracle": [
+        [
+          7.491347868365016e-07,
+          -7.491342868365017e-07
+        ],
+        [
+          -7.491342868365017e-07,
+          7.491347868365016e-07
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 1000.0,
+      "variance": 1e-16,
+      "status": "returned",
+      "scaled_error": 1.5638745612761652e-11,
+      "covariance": [
+        [
+          7.491345368732171e-07,
+          -7.491345368232172e-07
+        ],
+        [
+          -7.491345368232172e-07,
+          7.491345368732171e-07
+        ]
+      ],
+      "oracle": [
+        [
+          7.491345368615016e-07,
+          -7.491345368115017e-07
+        ],
+        [
+          -7.491345368115017e-07,
+          7.491345368615016e-07
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "variance": 1e-08,
+      "status": "returned",
+      "scaled_error": 6.064369674241191e-09,
+      "covariance": [
+        [
+          9.999134085232062e-09,
+          -4.999134097732063e-09
+        ],
+        [
+          -4.999134097732063e-09,
+          9.999134085232062e-09
+        ]
+      ],
+      "oracle": [
+        [
+          9.999134024593617e-09,
+          -4.999134037093618e-09
+        ],
+        [
+          -4.999134037093618e-09,
+          9.999134024593617e-09
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "variance": 1e-12,
+      "status": "returned",
+      "scaled_error": 8.08579009929666e-09,
+      "covariance": [
+        [
+          7.499384091482063e-09,
+          -7.498884091482062e-09
+        ],
+        [
+          -7.498884091482062e-09,
+          7.499384091482063e-09
+        ]
+      ],
+      "oracle": [
+        [
+          7.499384030843618e-09,
+          -7.498884030843617e-09
+        ],
+        [
+          -7.498884030843617e-09,
+          7.499384030843618e-09
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "variance": 1e-16,
+      "status": "returned",
+      "scaled_error": 8.08605962980045e-09,
+      "covariance": [
+        [
+          7.499134116482063e-09,
+          -7.499134066482062e-09
+        ],
+        [
+          -7.499134066482062e-09,
+          7.499134116482063e-09
+        ]
+      ],
+      "oracle": [
+        [
+          7.499134055843618e-09,
+          -7.499134005843617e-09
+        ],
+        [
+          -7.499134005843617e-09,
+          7.499134055843618e-09
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100000.0,
+      "variance": 1e-08,
+      "status": "returned",
+      "scaled_error": 2.7753121817566943e-08,
+      "covariance": [
+        [
+          2.5749990562659573e-09,
+          2.4250009312340435e-09
+        ],
+        [
+          2.4250009312340435e-09,
+          2.5749990562659573e-09
+        ]
+      ],
+      "oracle": [
+        [
+          2.5749991277302213e-09,
+          2.425000859769779e-09
+        ],
+        [
+          2.425000859769779e-09,
+          2.5749991277302213e-09
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100000.0,
+      "variance": 1e-12,
+      "status": "returned",
+      "scaled_error": 9.49702149699004e-07,
+      "covariance": [
+        [
+          7.524906251595683e-11,
+          -7.474906251595696e-11
+        ],
+        [
+          -7.474906251595696e-11,
+          7.524906251595683e-11
+        ]
+      ],
+      "oracle": [
+        [
+          7.524913398022113e-11,
+          -7.474913398022125e-11
+        ],
+        [
+          -7.474913398022125e-11,
+          7.524913398022113e-11
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    },
+    {
+      "scale": 100000.0,
+      "variance": 1e-16,
+      "status": "returned",
+      "scaled_error": 9.52867542459389e-07,
+      "covariance": [
+        [
+          7.499908751595689e-11,
+          -7.49990375159569e-11
+        ],
+        [
+          -7.49990375159569e-11,
+          7.499908751595689e-11
+        ]
+      ],
+      "oracle": [
+        [
+          7.499915898022119e-11,
+          -7.499910898022119e-11
+        ],
+        [
+          -7.499910898022119e-11,
+          7.499915898022119e-11
+        ]
+      ],
+      "embedding": [
+        2,
+        2
+      ]
+    }
+  ],
+  "note": "Saved independent reviewer evidence, not rerun or newly resolved in this documentation follow-up."
+}
