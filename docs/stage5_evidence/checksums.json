@@ -1,0 +1,9 @@
+{
+  "large-synthetic-arrays.npz": "50c14937ba8673038a2fb0362cc59038cf9aaa9531befcc0813aec298853d6dd",
+  "metrics.json": "26b201c58e449849396df9f67ef53bf296ce8a74bc85990a3e25a1b250ec596c",
+  "rv27-corrections.json": "fe9426d6cb480f86c39c24fc3f2de6d4e24bc1316990bf3cf2b9d70f7f7e816a",
+  "rv27-dynamic-range.npz": "a0e9cefc20196cfa0167cfe3627a2e08041196b728fac994096315a6a83a5ee4",
+  "rv27-large-synthetic-arrays.npz": "09498b4333ee4d7d4f2b4deb89bd5b764875aee4ab7199d6c3082d75a0c5d12d",
+  "rv27-scaling.svg": "0f45dadb8277fe8247f1c3e802a27cf099abf4d6ffff741828036523ec4715d5",
+  "scaling.svg": "309d24a5a21c604d47b818f401baf8abb853c55a02b778d4c701694c064a09f9"
+}
